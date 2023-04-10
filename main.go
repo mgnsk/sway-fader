@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/joshuarubin/go-sway"
+	"github.com/mgnsk/sway-fader/fader"
 	"github.com/spf13/cobra"
 )
 
@@ -72,7 +73,7 @@ SOFTWARE.
 				return err
 			}
 
-			b := NewHandler(writeClient, fps, fadeDuration)
+			b := fader.NewHandler(writeClient, fps, fadeDuration)
 
 			b = b.WithContainerClassFade(".*", defaultFrom, defaultTo)
 
