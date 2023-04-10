@@ -245,7 +245,7 @@ func (build Builder) Build() (*SwayEventHandler, error) {
 		return nil, err
 	}
 
-	frameDur := time.Duration((1.0 / fps) * float64(time.Second))
+	frameDur := time.Duration((1.0 / o.fps) * float64(time.Second))
 	numFrames := int(o.fadeDur / frameDur)
 
 	for _, s := range o.settings {
