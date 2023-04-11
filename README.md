@@ -13,5 +13,4 @@ exec sway-fader --app_id="foot:0.7:0.97"
 
 ```
 go install github.com/mgnsk/sway-fader@latest
-
 ```
