@@ -8,3 +8,10 @@ Usual config in ~/.config/sway/config to keep terminals transparent and other wi
 for_window [app_id="foot"] opacity 0.97
 exec sway-fader --app_id="foot:0.7:0.97"
 ```
+
+# Install
+
+```
+go install github.com/mgnsk/sway-fader@latest
+
+```
