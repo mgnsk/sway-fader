@@ -1,7 +1,6 @@
 package fader
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -22,7 +21,6 @@ type SwayEventHandler struct {
 	settings  []*opacitySetting
 
 	cancel func()
-	cmdBuf *bytes.Buffer
 	sway.EventHandler
 }
 
@@ -53,7 +51,7 @@ func (h *SwayEventHandler) Workspace(ctx context.Context, e sway.WorkspaceEvent)
 
 		tree, err := h.client.GetTree(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s", err.Error())
+			fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 			return
 		}
 
@@ -137,7 +135,7 @@ func (h *SwayEventHandler) runJob(ctx context.Context, containers []*sway.Node) 
 				cmd := strings.Join(targets, "; ")
 
 				if _, err := h.client.RunCommand(ctx, cmd); err != nil {
-					fmt.Fprintf(os.Stderr, "%s", err.Error())
+					fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 					return
 				}
 			}
@@ -258,7 +256,6 @@ func (build Builder) Build() (*SwayEventHandler, error) {
 		frameDur:     frameDur,
 		numFrames:    numFrames,
 		settings:     o.settings,
-		cmdBuf:       &bytes.Buffer{},
 		EventHandler: sway.NoOpEventHandler(),
 	}, nil
 }

@@ -45,6 +45,8 @@ func main() {
 	root := &cobra.Command{
 		Short: "sway-fader fades in visible containers on workspace focus.",
 		Long: `
+sway-fader fades in visible containers on workspace focus.
+
 MIT License
 
 Copyright (c) 2023 Magnus Kokk
