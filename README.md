@@ -1,6 +1,6 @@
 # sway-fader
 
-sway-fader fades in visible windows when a workspace is focused.
+sway-fader fades in windows on workspace switch and window creation.
 
 Example config in ~/.config/sway/config to keep `foot` terminal transparent and other windows opaque:
 
