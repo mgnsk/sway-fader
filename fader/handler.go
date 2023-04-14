@@ -30,10 +30,6 @@ func walkTree(node *sway.Node, f func(node *sway.Node)) {
 	for _, n := range node.Nodes {
 		walkTree(n, f)
 	}
-
-	for _, n := range node.FloatingNodes {
-		walkTree(n, f)
-	}
 }
 
 // Window handles window creation events.
@@ -91,8 +87,7 @@ func (h *SwayEventHandler) createRequestsForVisible(node *sway.Node) [][]string 
 	requests := make([][]string, h.numFrames)
 
 	walkTree(node, func(node *sway.Node) {
-		if (node.Type == sway.NodeCon || node.Type == sway.NodeFloatingCon) &&
-			node.Visible != nil && *node.Visible {
+		if node.Type == sway.NodeCon && node.Visible != nil && *node.Visible {
 			foundAppID := false
 			if node.AppID != nil {
 				if s := h.findAppIDTarget(*node.AppID); s != nil {
