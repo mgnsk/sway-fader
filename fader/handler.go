@@ -20,7 +20,7 @@ type SwayEventHandler struct {
 	numFrames int
 	settings  []*opacitySetting
 
-	cancel func()
+	jobs []func()
 	sway.EventHandler
 }
 
@@ -36,14 +36,23 @@ func walkTree(node *sway.Node, f func(node *sway.Node)) {
 	}
 }
 
+// Window handles window creation events.
+func (h *SwayEventHandler) Window(ctx context.Context, e sway.WindowEvent) {
+	switch e.Change {
+	case sway.WindowNew:
+		requests := h.createRequestsForWindow(&e.Container)
+		h.jobs = append(h.jobs, h.runJob(ctx, requests))
+	}
+}
+
 // Workspace handles workspace focus events.
 func (h *SwayEventHandler) Workspace(ctx context.Context, e sway.WorkspaceEvent) {
 	switch e.Change {
 	case sway.WorkspaceFocus:
-		if h.cancel != nil {
-			h.cancel()
-			h.cancel = nil
+		for _, cancel := range h.jobs {
+			cancel()
 		}
+		h.jobs = h.jobs[:0]
 
 		if e.Current == nil {
 			return
@@ -55,18 +64,8 @@ func (h *SwayEventHandler) Workspace(ctx context.Context, e sway.WorkspaceEvent)
 			return
 		}
 
-		var visibleContainers []*sway.Node
-
-		walkTree(tree, func(node *sway.Node) {
-			if (node.Type == sway.NodeCon || node.Type == sway.NodeFloatingCon) &&
-				node.Visible != nil && *node.Visible {
-				visibleContainers = append(visibleContainers, node)
-			}
-		})
-
-		if len(visibleContainers) > 0 {
-			h.cancel = h.runJob(ctx, visibleContainers)
-		}
+		requests := h.createRequestsForVisible(tree)
+		h.jobs = append(h.jobs, h.runJob(ctx, requests))
 	}
 }
 
@@ -88,38 +87,73 @@ func (h *SwayEventHandler) findClassTarget(class string) *opacitySetting {
 	return nil
 }
 
-// runJob runs a job and returns a callback which cancels the job
-// and waits for pending requests to finish. runJob must not be called
-// again until the previous stop has returned unless it's the first call.
-func (h *SwayEventHandler) runJob(ctx context.Context, containers []*sway.Node) (stop func()) {
-	cancel := make(chan struct{})
-	wg := sync.WaitGroup{}
+func (h *SwayEventHandler) createRequestsForVisible(node *sway.Node) [][]string {
 	requests := make([][]string, h.numFrames)
 
-	for _, node := range containers {
-		foundAppID := false
-
-		if node.AppID != nil {
-			if s := h.findAppIDTarget(*node.AppID); s != nil {
-				for i, opacity := range s.frames {
-					requests[i] = append(requests[i], fmt.Sprintf(`[app_id="%s"] opacity %.2f`, *node.AppID, opacity))
+	walkTree(node, func(node *sway.Node) {
+		if (node.Type == sway.NodeCon || node.Type == sway.NodeFloatingCon) &&
+			node.Visible != nil && *node.Visible {
+			foundAppID := false
+			if node.AppID != nil {
+				if s := h.findAppIDTarget(*node.AppID); s != nil {
+					for i, opacity := range s.frames {
+						requests[i] = append(requests[i], fmt.Sprintf(`[app_id="%s"] opacity %.2f`, *node.AppID, opacity))
+					}
+					foundAppID = true
 				}
-				foundAppID = true
+			}
+
+			if !foundAppID {
+				var class string
+				if p := node.WindowProperties; p != nil {
+					class = p.Class
+				}
+				if s := h.findClassTarget(class); s != nil {
+					for i, opacity := range s.frames {
+						requests[i] = append(requests[i], fmt.Sprintf(`[class="%s"] opacity %.2f`, class, opacity))
+					}
+				}
 			}
 		}
+	})
 
-		if !foundAppID {
-			var class string
-			if p := node.WindowProperties; p != nil {
-				class = p.Class
+	return requests
+}
+
+func (h *SwayEventHandler) createRequestsForWindow(node *sway.Node) [][]string {
+	requests := make([][]string, h.numFrames)
+
+	foundAppID := false
+	if node.AppID != nil {
+		if s := h.findAppIDTarget(*node.AppID); s != nil {
+			for i, opacity := range s.frames {
+				requests[i] = append(requests[i], fmt.Sprintf(`[con_id=%d] opacity %.2f`, node.ID, opacity))
 			}
-			if s := h.findClassTarget(class); s != nil {
-				for i, opacity := range s.frames {
-					requests[i] = append(requests[i], fmt.Sprintf(`[class="%s"] opacity %.2f`, class, opacity))
-				}
+			foundAppID = true
+		}
+	}
+
+	if !foundAppID {
+		var class string
+		if p := node.WindowProperties; p != nil {
+			class = p.Class
+		}
+		if s := h.findClassTarget(class); s != nil {
+			for i, opacity := range s.frames {
+				requests[i] = append(requests[i], fmt.Sprintf(`[con_id=%d] opacity %.2f`, node.ID, opacity))
 			}
 		}
 	}
+
+	return requests
+}
+
+// runJob runs a job and returns a callback which cancels the job
+// and waits for pending requests to finish. runJob must not be called
+// again until the previous stop has returned unless it's the first call.
+func (h *SwayEventHandler) runJob(ctx context.Context, requests [][]string) (stop func()) {
+	cancel := make(chan struct{})
+	wg := sync.WaitGroup{}
 
 	wg.Add(1)
 	go func() {

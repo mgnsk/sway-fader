@@ -43,9 +43,9 @@ func parseTarget(flagValue string) (selector string, from, to float64, err error
 
 func main() {
 	root := &cobra.Command{
-		Short: "sway-fader fades in visible containers on workspace focus.",
+		Short: "sway-fader fades in windows on workspace switch and window creation.",
 		Long: `
-sway-fader fades in visible containers on workspace focus.
+sway-fader fades in windows on workspace switch and window creation.
 
 MIT License
 
@@ -104,6 +104,7 @@ SOFTWARE.
 				c.Context(),
 				h,
 				sway.EventTypeWorkspace,
+				sway.EventTypeWindow,
 			)
 		},
 	}
@@ -116,7 +117,7 @@ SOFTWARE.
 	root.PersistentFlags().StringArrayVar(&classTargets, "class", nil, `Override fade settings per container class. Format: "regex:from:to". Example: --class="FreeTube:0.7:1.0" --class="Firefox:0.8:1.0"`)
 
 	if err := root.ExecuteContext(context.TODO()); err != nil {
-		fmt.Println(err)
+		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 		os.Exit(1)
 	}
 }
