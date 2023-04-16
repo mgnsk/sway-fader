@@ -24,12 +24,24 @@ type SwayEventHandler struct {
 	sway.EventHandler
 }
 
-func walkTree(node *sway.Node, f func(node *sway.Node)) {
-	f(node)
+// CommandList is a list of sway commands.
+type CommandList []strings.Builder
 
-	for _, n := range node.Nodes {
-		walkTree(n, f)
+// InitVisibleWorkspace triggers the initial fade on startup.
+func (h *SwayEventHandler) InitVisibleWorkspace(ctx context.Context) {
+	for _, cancel := range h.jobs {
+		cancel()
 	}
+	h.jobs = h.jobs[:0]
+
+	tree, err := h.client.GetTree(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
+		return
+	}
+
+	requests := h.createRequestsForVisible(tree)
+	h.jobs = append(h.jobs, h.runJob(ctx, requests))
 }
 
 // Window handles window creation events.
@@ -83,8 +95,16 @@ func (h *SwayEventHandler) findClassTarget(class string) *opacitySetting {
 	return nil
 }
 
-func (h *SwayEventHandler) createRequestsForVisible(node *sway.Node) [][]string {
-	requests := make([][]string, h.numFrames)
+func walkTree(node *sway.Node, f func(node *sway.Node)) {
+	f(node)
+
+	for _, n := range node.Nodes {
+		walkTree(n, f)
+	}
+}
+
+func (h *SwayEventHandler) createRequestsForVisible(node *sway.Node) CommandList {
+	cmdList := make(CommandList, h.numFrames)
 
 	walkTree(node, func(node *sway.Node) {
 		if node.Type == sway.NodeCon && node.Visible != nil && *node.Visible {
@@ -92,7 +112,7 @@ func (h *SwayEventHandler) createRequestsForVisible(node *sway.Node) [][]string 
 			if node.AppID != nil {
 				if s := h.findAppIDTarget(*node.AppID); s != nil {
 					for i, opacity := range s.frames {
-						requests[i] = append(requests[i], fmt.Sprintf(`[app_id="%s"] opacity %.2f`, *node.AppID, opacity))
+						cmdList[i].WriteString(fmt.Sprintf(`[app_id="%s"] opacity %.2f;`, *node.AppID, opacity))
 					}
 					foundAppID = true
 				}
@@ -105,24 +125,24 @@ func (h *SwayEventHandler) createRequestsForVisible(node *sway.Node) [][]string 
 				}
 				if s := h.findClassTarget(class); s != nil {
 					for i, opacity := range s.frames {
-						requests[i] = append(requests[i], fmt.Sprintf(`[class="%s"] opacity %.2f`, class, opacity))
+						cmdList[i].WriteString(fmt.Sprintf(`[class="%s"] opacity %.2f;`, class, opacity))
 					}
 				}
 			}
 		}
 	})
 
-	return requests
+	return cmdList
 }
 
-func (h *SwayEventHandler) createRequestsForWindow(node *sway.Node) [][]string {
-	requests := make([][]string, h.numFrames)
+func (h *SwayEventHandler) createRequestsForWindow(node *sway.Node) CommandList {
+	cmdList := make(CommandList, h.numFrames)
 
 	foundAppID := false
 	if node.AppID != nil {
 		if s := h.findAppIDTarget(*node.AppID); s != nil {
 			for i, opacity := range s.frames {
-				requests[i] = append(requests[i], fmt.Sprintf(`[con_id=%d] opacity %.2f`, node.ID, opacity))
+				cmdList[i].WriteString(fmt.Sprintf(`[con_id=%d] opacity %.2f;`, node.ID, opacity))
 			}
 			foundAppID = true
 		}
@@ -135,18 +155,25 @@ func (h *SwayEventHandler) createRequestsForWindow(node *sway.Node) [][]string {
 		}
 		if s := h.findClassTarget(class); s != nil {
 			for i, opacity := range s.frames {
-				requests[i] = append(requests[i], fmt.Sprintf(`[con_id=%d] opacity %.2f`, node.ID, opacity))
+				cmdList[i].WriteString(fmt.Sprintf(`[con_id=%d] opacity %.2f;`, node.ID, opacity))
 			}
 		}
 	}
 
-	return requests
+	return cmdList
 }
 
 // runJob runs a job and returns a callback which cancels the job
 // and waits for pending requests to finish. runJob must not be called
-// again until the previous stop has returned unless it's the first call.
-func (h *SwayEventHandler) runJob(ctx context.Context, requests [][]string) (stop func()) {
+// again until the previous stop has returned.
+func (h *SwayEventHandler) runJob(ctx context.Context, cmdList CommandList) (stop func()) {
+	// Run first command synchronously and reset ticker for next frame.
+	if _, err := h.client.RunCommand(ctx, cmdList[0].String()); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
+		return
+	}
+	h.ticker.Reset(h.frameDur)
+
 	cancel := make(chan struct{})
 	wg := sync.WaitGroup{}
 
@@ -154,16 +181,14 @@ func (h *SwayEventHandler) runJob(ctx context.Context, requests [][]string) (sto
 	go func() {
 		defer wg.Done()
 
-		for _, targets := range requests {
+		for _, cmd := range cmdList[1:] {
 			select {
 			case <-ctx.Done():
 				return
 			case <-cancel:
 				return
 			case <-h.ticker.C:
-				cmd := strings.Join(targets, "; ")
-
-				if _, err := h.client.RunCommand(ctx, cmd); err != nil {
+				if _, err := h.client.RunCommand(ctx, cmd.String()); err != nil {
 					fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 					return
 				}

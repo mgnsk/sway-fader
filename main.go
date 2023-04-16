@@ -100,6 +100,8 @@ SOFTWARE.
 				return err
 			}
 
+			h.InitVisibleWorkspace(c.Context())
+
 			return sway.Subscribe(
 				c.Context(),
 				h,
