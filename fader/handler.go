@@ -14,11 +14,11 @@ import (
 
 // SwayEventHandler handles sway events and triggers fades.
 type SwayEventHandler struct {
-	client    sway.Client
-	ticker    *time.Ticker
-	frameDur  time.Duration
-	numFrames int
-	settings  []*opacitySetting
+	client      sway.Client
+	ticker      *time.Ticker
+	frameDur    time.Duration
+	numFrames   int
+	transitions transitionList
 
 	jobs []func()
 	sway.EventHandler
@@ -41,8 +41,8 @@ func (h *SwayEventHandler) Window(ctx context.Context, e sway.WindowEvent) {
 func (h *SwayEventHandler) Workspace(ctx context.Context, e sway.WorkspaceEvent) {
 	switch e.Change {
 	case sway.WorkspaceFocus:
-		for _, cancel := range h.jobs {
-			cancel()
+		for _, stop := range h.jobs {
+			stop()
 		}
 		h.jobs = h.jobs[:0]
 
@@ -61,24 +61,6 @@ func (h *SwayEventHandler) Workspace(ctx context.Context, e sway.WorkspaceEvent)
 	}
 }
 
-func (h *SwayEventHandler) findAppIDTarget(appID string) *opacitySetting {
-	for _, s := range h.settings {
-		if s.appID != nil && s.appID.MatchString(appID) {
-			return s
-		}
-	}
-	return nil
-}
-
-func (h *SwayEventHandler) findClassTarget(class string) *opacitySetting {
-	for _, s := range h.settings {
-		if s.class != nil && s.class.MatchString(class) {
-			return s
-		}
-	}
-	return nil
-}
-
 func walkTree(node *sway.Node, f func(node *sway.Node)) {
 	f(node)
 
@@ -94,10 +76,8 @@ func (h *SwayEventHandler) createConRequests(dst CommandList, con *sway.Node) {
 
 	foundAppID := false
 	if con.AppID != nil {
-		if s := h.findAppIDTarget(*con.AppID); s != nil {
-			for i, opacity := range s.frames {
-				dst[i].WriteString(fmt.Sprintf(`[con_id=%d] opacity %.2f;`, con.ID, opacity))
-			}
+		if t := h.transitions.findByAppID(*con.AppID); t != nil {
+			t.writeTo(dst, con.ID)
 			foundAppID = true
 		}
 	}
@@ -107,10 +87,8 @@ func (h *SwayEventHandler) createConRequests(dst CommandList, con *sway.Node) {
 		if p := con.WindowProperties; p != nil {
 			class = p.Class
 		}
-		if s := h.findClassTarget(class); s != nil {
-			for i, opacity := range s.frames {
-				dst[i].WriteString(fmt.Sprintf(`[con_id=%d] opacity %.2f;`, con.ID, opacity))
-			}
+		if t := h.transitions.findByClass(class); t != nil {
+			t.writeTo(dst, con.ID)
 		}
 	}
 }
@@ -153,34 +131,11 @@ func (h *SwayEventHandler) createJob(ctx context.Context, cmdList CommandList) (
 	}
 }
 
-type opacitySetting struct {
-	appID  *regexp.Regexp
-	class  *regexp.Regexp
-	from   float64
-	to     float64
-	frames []float64
-}
-
-func (s *opacitySetting) calcFrames(numFrames int) {
-	frames := make([]float64, numFrames)
-
-	start := s.from
-	end := s.to
-	dist := end - start
-
-	for i := 0; i < numFrames; i++ {
-		x := float64(i+1) / float64(numFrames)
-		frames[i] = x*dist + start
-	}
-
-	s.frames = frames
-}
-
 type options struct {
-	client   sway.Client
-	fps      float64
-	fadeDur  time.Duration
-	settings []*opacitySetting
+	client      sway.Client
+	fps         float64
+	fadeDur     time.Duration
+	transitions []*transition
 }
 
 // Builder builds a handler.
@@ -209,7 +164,7 @@ func (build Builder) WithContainerAppIDFade(appIDRegex string, from, to float64)
 			return err
 		}
 
-		o.settings = append(o.settings, &opacitySetting{
+		o.transitions = append(o.transitions, &transition{
 			appID: r,
 			from:  from,
 			to:    to,
@@ -231,7 +186,7 @@ func (build Builder) WithContainerClassFade(classRegex string, from, to float64)
 			return err
 		}
 
-		o.settings = append(o.settings, &opacitySetting{
+		o.transitions = append(o.transitions, &transition{
 			class: r,
 			from:  from,
 			to:    to,
@@ -251,8 +206,8 @@ func (build Builder) Build() (*SwayEventHandler, error) {
 	frameDur := time.Duration((1.0 / o.fps) * float64(time.Second))
 	numFrames := int(o.fadeDur / frameDur)
 
-	for _, s := range o.settings {
-		s.calcFrames(numFrames)
+	for _, t := range o.transitions {
+		t.calcFrames(numFrames)
 	}
 
 	return &SwayEventHandler{
@@ -260,7 +215,7 @@ func (build Builder) Build() (*SwayEventHandler, error) {
 		ticker:       time.NewTicker(frameDur),
 		frameDur:     frameDur,
 		numFrames:    numFrames,
-		settings:     o.settings,
+		transitions:  o.transitions,
 		EventHandler: sway.NoOpEventHandler(),
 	}, nil
 }
