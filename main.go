@@ -14,37 +14,26 @@ import (
 )
 
 var (
-	fps          float64
-	defaultTo    float64
-	defaultFrom  float64
-	fadeDuration time.Duration
+	fps                        = 60.0
+	defaultTo                  = 1.0
+	defaultFrom                = 0.7
+	fadeDuration time.Duration = 200 * time.Millisecond
 	appIDTargets []string
 	classTargets []string
 )
 
-func parseTarget(flagValue string) (selector string, from, to float64, err error) {
-	parts := strings.Split(flagValue, ":")
-	if len(parts) != 3 {
-		return "", 0, 0, fmt.Errorf("invalid number of target components: %s", flagValue)
-	}
-
-	from, err = strconv.ParseFloat(parts[1], 64)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid from value in target '%s': %w", flagValue, err)
-	}
-
-	to, err = strconv.ParseFloat(parts[2], 64)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid to value in target '%s': %w", flagValue, err)
-	}
-
-	return parts[0], from, to, nil
+func init() {
+	root.PersistentFlags().Float64Var(&fps, "fps", fps, "Frames per second for the fade")
+	root.PersistentFlags().Float64Var(&defaultFrom, "default-from", defaultFrom, "Default opacity when fade starts")
+	root.PersistentFlags().Float64Var(&defaultTo, "default-to", defaultTo, "Default final opacity of fade")
+	root.PersistentFlags().DurationVarP(&fadeDuration, "duration", "d", fadeDuration, "Duration of the fade")
+	root.PersistentFlags().StringArrayVar(&appIDTargets, "app_id", appIDTargets, `Override fade settings per container app_id. Format: "regex:from:to". Example: --app_id="foot:0.7:0.97" --app_id="org.telegram.desktop:0.8:1.0"`)
+	root.PersistentFlags().StringArrayVar(&classTargets, "class", classTargets, `Override fade settings per container class. Format: "regex:from:to". Example: --class="FreeTube:0.7:1.0" --class="Firefox:0.8:1.0"`)
 }
 
-func main() {
-	root := &cobra.Command{
-		Short: "sway-fader fades in windows on workspace switch and window creation.",
-		Long: `
+var root = &cobra.Command{
+	Short: "sway-fader fades in windows on workspace switch and window creation.",
+	Long: `
 sway-fader fades in windows on workspace switch and window creation.
 
 MIT License
@@ -69,55 +58,68 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 `,
-		RunE: func(c *cobra.Command, args []string) error {
-			writeClient, err := sway.New(c.Context())
+	RunE: func(c *cobra.Command, args []string) error {
+		writeClient, err := sway.New(c.Context())
+		if err != nil {
+			return err
+		}
+
+		b := fader.NewHandler(writeClient, fps, fadeDuration)
+
+		b = b.WithContainerClassFade(".*", defaultFrom, defaultTo)
+
+		for _, target := range appIDTargets {
+			sel, from, to, err := parseTarget(target)
 			if err != nil {
 				return err
 			}
+			b = b.WithContainerAppIDFade(sel, from, to)
+		}
 
-			b := fader.NewHandler(writeClient, fps, fadeDuration)
-
-			b = b.WithContainerClassFade(".*", defaultFrom, defaultTo)
-
-			for _, target := range appIDTargets {
-				sel, from, to, err := parseTarget(target)
-				if err != nil {
-					return err
-				}
-				b = b.WithContainerAppIDFade(sel, from, to)
-			}
-
-			for _, target := range classTargets {
-				sel, from, to, err := parseTarget(target)
-				if err != nil {
-					return err
-				}
-				b = b.WithContainerClassFade(sel, from, to)
-			}
-
-			h, err := b.Build()
+		for _, target := range classTargets {
+			sel, from, to, err := parseTarget(target)
 			if err != nil {
 				return err
 			}
+			b = b.WithContainerClassFade(sel, from, to)
+		}
 
-			return sway.Subscribe(
-				c.Context(),
-				h,
-				sway.EventTypeWorkspace,
-				sway.EventTypeWindow,
-			)
-		},
-	}
+		h, err := b.Build()
+		if err != nil {
+			return err
+		}
 
-	root.PersistentFlags().Float64Var(&fps, "fps", 60, "Frames per second for the fade")
-	root.PersistentFlags().Float64Var(&defaultFrom, "default-from", 0.7, "Default opacity when fade starts")
-	root.PersistentFlags().Float64Var(&defaultTo, "default-to", 1.0, "Default final opacity of fade")
-	root.PersistentFlags().DurationVarP(&fadeDuration, "duration", "d", 200*time.Millisecond, "Duration of the fade")
-	root.PersistentFlags().StringArrayVar(&appIDTargets, "app_id", nil, `Override fade settings per container app_id. Format: "regex:from:to". Example: --app_id="foot:0.7:0.97" --app_id="org.telegram.desktop:0.8:1.0"`)
-	root.PersistentFlags().StringArrayVar(&classTargets, "class", nil, `Override fade settings per container class. Format: "regex:from:to". Example: --class="FreeTube:0.7:1.0" --class="Firefox:0.8:1.0"`)
+		return sway.Subscribe(
+			c.Context(),
+			h,
+			sway.EventTypeWorkspace,
+			sway.EventTypeWindow,
+		)
+	},
+}
 
+func main() {
 	if err := root.ExecuteContext(context.TODO()); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 		os.Exit(1)
 	}
+}
+
+func parseTarget(flagValue string) (selector string, from, to float64, err error) {
+	parts := strings.Split(flagValue, ":")
+	if len(parts) != 3 {
+		return "", 0, 0, fmt.Errorf("invalid number of target components: %s", flagValue)
+	}
+
+	from, err = strconv.ParseFloat(parts[1], 64)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("invalid from value in target '%s': %w", flagValue, err)
+	}
+
+	to, err = strconv.ParseFloat(parts[2], 64)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("invalid to value in target '%s': %w", flagValue, err)
+	}
+
+	return parts[0], from, to, nil
 }
