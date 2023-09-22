@@ -8,30 +8,28 @@ import (
 type transition struct {
 	appID  *regexp.Regexp
 	class  *regexp.Regexp
-	from   float64
-	to     float64
 	frames []float64
 }
 
+func newAppTransition(appID *regexp.Regexp, from, to float64, steps int) (*transition, error) {
+	return &transition{
+		appID:  appID,
+		frames: calcFrames(from, to, steps),
+	}, nil
+}
+
+func newClassTransition(class *regexp.Regexp, from, to float64, steps int) (*transition, error) {
+	return &transition{
+		class:  class,
+		frames: calcFrames(from, to, steps),
+	}, nil
+}
+
 func (t *transition) writeTo(dst CommandList, conID int64) {
+	// cache the commands
 	for i, opacity := range t.frames {
 		dst[i].WriteString(fmt.Sprintf(`[con_id=%d] opacity %.2f;`, conID, opacity))
 	}
-}
-
-func (t *transition) calcFrames(numFrames int) {
-	frames := make([]float64, numFrames)
-
-	start := t.from
-	end := t.to
-	dist := end - start
-
-	for i := 0; i < numFrames; i++ {
-		x := float64(i+1) / float64(numFrames)
-		frames[i] = x*dist + start
-	}
-
-	t.frames = frames
 }
 
 type transitionList []*transition
@@ -52,4 +50,18 @@ func (list transitionList) findByClass(class string) *transition {
 		}
 	}
 	return nil
+}
+
+func calcFrames(from, to float64, steps int) []float64 {
+	frames := make([]float64, steps)
+
+	dist := to - from
+
+	for i := 0; i < steps; i++ {
+		// TODO: configure transition type
+		x := float64(i+1) / float64(steps)
+		frames[i] = x*dist + from
+	}
+
+	return frames
 }
