@@ -106,9 +106,8 @@ func (h *SwayEventHandler) createJob(ctx context.Context, cmdList CommandList) (
 		defer cancel()
 
 		// Run first command immediately and reset ticker for next frame.
-		if _, err := h.client.RunCommand(ctx, cmdList[0].String()); err != nil {
+		if _, err := h.client.RunCommand(context.Background(), cmdList[0].String()); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s", err.Error())
-			return
 		}
 
 		h.ticker.Reset(h.frameDur)
@@ -118,9 +117,8 @@ func (h *SwayEventHandler) createJob(ctx context.Context, cmdList CommandList) (
 			case <-ctx.Done():
 				return
 			case <-h.ticker.C:
-				if _, err := h.client.RunCommand(ctx, cmd.String()); err != nil {
+				if _, err := h.client.RunCommand(context.Background(), cmd.String()); err != nil {
 					fmt.Fprintf(os.Stderr, "error: %s", err.Error())
-					return
 				}
 			}
 		}
