@@ -1,9 +1,8 @@
 module github.com/mgnsk/sway-fader
 
-go 1.20
+go 1.21
 
 require (
-	github.com/davecgh/go-spew v1.1.0
 	github.com/joshuarubin/go-sway v1.2.0
 	github.com/spf13/cobra v1.6.1
 )

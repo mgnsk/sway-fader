@@ -5,16 +5,20 @@ import (
 	"regexp"
 )
 
+const cacheSize = 64
+
 type transition struct {
 	appID  *regexp.Regexp
 	class  *regexp.Regexp
 	frames []float64
+	cache  map[int64][]string
 }
 
 func newAppTransition(appID *regexp.Regexp, from, to float64, steps int) (*transition, error) {
 	return &transition{
 		appID:  appID,
 		frames: calcFrames(from, to, steps),
+		cache:  make(map[int64][]string, cacheSize),
 	}, nil
 }
 
@@ -22,13 +26,35 @@ func newClassTransition(class *regexp.Regexp, from, to float64, steps int) (*tra
 	return &transition{
 		class:  class,
 		frames: calcFrames(from, to, steps),
+		cache:  make(map[int64][]string, cacheSize),
+	}, nil
+}
+
+func newTransition(from, to float64, steps int) (*transition, error) {
+	return &transition{
+		frames: calcFrames(from, to, steps),
+		cache:  make(map[int64][]string, cacheSize),
 	}, nil
 }
 
 func (t *transition) writeTo(dst CommandList, conID int64) {
-	// cache the commands
-	for i, opacity := range t.frames {
-		dst[i].WriteString(fmt.Sprintf(`[con_id=%d] opacity %.2f;`, conID, opacity))
+	commands, ok := t.cache[conID]
+	if !ok {
+		commands = make([]string, len(t.frames))
+
+		for i, opacity := range t.frames {
+			commands[i] = fmt.Sprintf(`[con_id=%d] opacity %.2f;`, conID, opacity)
+		}
+
+		if len(commands) == cacheSize {
+			clear(commands)
+		}
+
+		t.cache[conID] = commands
+	}
+
+	for i, cmd := range commands {
+		dst[i].WriteString(cmd)
 	}
 }
 
