@@ -1,7 +1,6 @@
 package fader
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -9,59 +8,52 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joshuarubin/go-sway"
+	"go.i3wm.org/i3/v4"
 )
 
-// SwayEventHandler handles sway events and triggers fades.
+// SwayEventHandler handles events and triggers fades.
 type SwayEventHandler struct {
-	client      sway.Client
-	ticker      *time.Ticker
 	frameDur    time.Duration
 	numFrames   int
 	transitions transitionList
 
 	jobs []func()
-	sway.EventHandler
 }
 
-// CommandList is a list of sway commands.
+// CommandList is a list of commands.
 type CommandList []strings.Builder
 
 // Window handles window creation events.
-func (h *SwayEventHandler) Window(ctx context.Context, e sway.WindowEvent) {
+func (h *SwayEventHandler) Window(e *i3.WindowEvent) {
 	switch e.Change {
-	case sway.WindowNew:
+	case "new":
 		requests := make(CommandList, h.numFrames)
 		h.createConRequests(requests, &e.Container)
-		h.jobs = append(h.jobs, h.createJob(ctx, requests))
+		h.jobs = append(h.jobs, h.createJob(requests))
 	}
 }
 
 // Workspace handles workspace focus events.
-func (h *SwayEventHandler) Workspace(ctx context.Context, e sway.WorkspaceEvent) {
+func (h *SwayEventHandler) Workspace(e *i3.WorkspaceEvent) {
 	switch e.Change {
-	case sway.WorkspaceFocus:
+	case "focus":
 		for _, stop := range h.jobs {
 			stop()
 		}
 		h.jobs = h.jobs[:0]
 
-		if e.Current == nil {
-			return
-		}
-
 		requests := make(CommandList, h.numFrames)
-		walkTree(e.Current, func(node *sway.Node) {
-			if node.Type == sway.NodeCon {
+		walkTree(&e.Current, func(node *i3.Node) {
+			if node.Type == i3.Con {
 				h.createConRequests(requests, node)
 			}
 		})
 
-		h.jobs = append(h.jobs, h.createJob(ctx, requests))
+		h.jobs = append(h.jobs, h.createJob(requests))
 	}
 }
 
-func walkTree(node *sway.Node, f func(node *sway.Node)) {
+func walkTree(node *i3.Node, f func(node *i3.Node)) {
 	f(node)
 
 	for _, n := range node.Nodes {
@@ -69,55 +61,47 @@ func walkTree(node *sway.Node, f func(node *sway.Node)) {
 	}
 }
 
-func (h *SwayEventHandler) createConRequests(dst CommandList, con *sway.Node) {
-	if con.Type != sway.NodeCon {
+func (h *SwayEventHandler) createConRequests(dst CommandList, con *i3.Node) {
+	if con.Type != i3.Con {
 		panic(`createConRequests: expected node type "con"`)
 	}
 
-	foundAppID := false
-	if con.AppID != nil {
-		if t := h.transitions.findByAppID(*con.AppID); t != nil {
+	if con.AppID != "" {
+		if t := h.transitions.findByAppID(con.AppID); t != nil {
 			t.writeTo(dst, con.ID)
-			foundAppID = true
+			return
 		}
 	}
 
-	if !foundAppID {
-		var class string
-		if p := con.WindowProperties; p != nil {
-			class = p.Class
-		}
-		if t := h.transitions.findByClass(class); t != nil {
-			t.writeTo(dst, con.ID)
-		}
+	if t := h.transitions.findByClass(con.WindowProperties.Class); t != nil {
+		t.writeTo(dst, con.ID)
 	}
 }
 
 // createJob runs a job and returns a callback which cancels the job
 // and waits for pending requests to finish.
-func (h *SwayEventHandler) createJob(ctx context.Context, cmdList CommandList) (stop func()) {
-	var cancel context.CancelFunc
-	ctx, cancel = context.WithCancel(ctx)
+func (h *SwayEventHandler) createJob(cmdList CommandList) (stop func()) {
 	wg := sync.WaitGroup{}
+	done := make(chan struct{})
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer cancel()
 
 		// Run first command immediately and reset ticker for next frame.
-		if _, err := h.client.RunCommand(context.Background(), cmdList[0].String()); err != nil {
+		if _, err := i3.RunCommand(cmdList[0].String()); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 		}
 
-		h.ticker.Reset(h.frameDur)
+		ticker := time.NewTicker(h.frameDur)
+		defer ticker.Stop()
 
 		for _, cmd := range cmdList[1:] {
 			select {
-			case <-ctx.Done():
+			case <-done:
 				return
-			case <-h.ticker.C:
-				if _, err := h.client.RunCommand(context.Background(), cmd.String()); err != nil {
+			case <-ticker.C:
+				if _, err := i3.RunCommand(cmd.String()); err != nil {
 					fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 				}
 			}
@@ -125,13 +109,12 @@ func (h *SwayEventHandler) createJob(ctx context.Context, cmdList CommandList) (
 	}()
 
 	return func() {
-		cancel()
+		close(done)
 		wg.Wait()
 	}
 }
 
 type options struct {
-	client      sway.Client
 	fps         float64
 	fadeDur     time.Duration
 	transitions []transitionOptions
@@ -145,10 +128,9 @@ type transitionOptions struct {
 // Builder builds a handler.
 type Builder func(*options) error
 
-// NewHandler creates a new sway event handler.
-func NewHandler(client sway.Client, fps float64, fadeDur time.Duration) Builder {
+// NewHandler creates a new event handler.
+func NewHandler(fps float64, fadeDur time.Duration) Builder {
 	return func(o *options) error {
-		o.client = client
 		o.fps = fps
 		o.fadeDur = fadeDur
 
@@ -229,11 +211,8 @@ func (build Builder) Build() (*SwayEventHandler, error) {
 	}
 
 	return &SwayEventHandler{
-		client:       o.client,
-		ticker:       time.NewTicker(frameDur),
-		frameDur:     frameDur,
-		numFrames:    numFrames,
-		transitions:  list,
-		EventHandler: sway.NoOpEventHandler(),
+		frameDur:    frameDur,
+		numFrames:   numFrames,
+		transitions: list,
 	}, nil
 }

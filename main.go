@@ -1,16 +1,17 @@
 package main
 
 import (
-	"context"
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/joshuarubin/go-sway"
 	"github.com/mgnsk/sway-fader/fader"
 	"github.com/spf13/cobra"
+	"go.i3wm.org/i3/v4"
 )
 
 var (
@@ -59,12 +60,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 `,
 	RunE: func(c *cobra.Command, args []string) error {
-		writeClient, err := sway.New(c.Context())
-		if err != nil {
-			return err
-		}
-
-		b := fader.NewHandler(writeClient, fps, fadeDuration)
+		b := fader.NewHandler(fps, fadeDuration)
 
 		b = b.WithContainerClassFade(".*", defaultFrom, defaultTo)
 
@@ -89,17 +85,41 @@ SOFTWARE.
 			return err
 		}
 
-		return sway.Subscribe(
-			c.Context(),
-			h,
-			sway.EventTypeWorkspace,
-			sway.EventTypeWindow,
-		)
+		i3.SocketPathHook = func() (string, error) {
+			if _, err := exec.LookPath("sway"); err == nil {
+				out, err := exec.Command("sway", "--get-socketpath").CombinedOutput()
+				return string(out), err
+			}
+
+			if _, err := exec.LookPath("i3"); err == nil {
+				out, err := exec.Command("i3", "--get-socketpath").CombinedOutput()
+				return string(out), err
+			}
+
+			return "", fmt.Errorf("could not find neither sway or i3 executable")
+		}
+
+		go func() {
+			r := i3.Subscribe(i3.WorkspaceEventType, i3.WindowEventType)
+			for r.Next() {
+				switch ev := r.Event().(type) {
+				case *i3.WorkspaceEvent:
+					h.Workspace(ev)
+				case *i3.WindowEvent:
+					h.Window(ev)
+				}
+			}
+			log.Fatal(r.Close())
+		}()
+
+		<-c.Context().Done()
+
+		return c.Context().Err()
 	},
 }
 
 func main() {
-	if err := root.ExecuteContext(context.TODO()); err != nil {
+	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 		os.Exit(1)
 	}

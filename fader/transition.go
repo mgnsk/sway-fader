@@ -3,6 +3,8 @@ package fader
 import (
 	"fmt"
 	"regexp"
+
+	"go.i3wm.org/i3/v4"
 )
 
 const cacheSize = 64
@@ -11,14 +13,14 @@ type transition struct {
 	appID  *regexp.Regexp
 	class  *regexp.Regexp
 	frames []float64
-	cache  map[int64][]string
+	cache  map[i3.NodeID][]string
 }
 
 func newAppTransition(appID *regexp.Regexp, from, to float64, steps int) (*transition, error) {
 	return &transition{
 		appID:  appID,
 		frames: calcFrames(from, to, steps),
-		cache:  make(map[int64][]string, cacheSize),
+		cache:  make(map[i3.NodeID][]string, cacheSize),
 	}, nil
 }
 
@@ -26,18 +28,18 @@ func newClassTransition(class *regexp.Regexp, from, to float64, steps int) (*tra
 	return &transition{
 		class:  class,
 		frames: calcFrames(from, to, steps),
-		cache:  make(map[int64][]string, cacheSize),
+		cache:  make(map[i3.NodeID][]string, cacheSize),
 	}, nil
 }
 
 func newTransition(from, to float64, steps int) (*transition, error) {
 	return &transition{
 		frames: calcFrames(from, to, steps),
-		cache:  make(map[int64][]string, cacheSize),
+		cache:  make(map[i3.NodeID][]string, cacheSize),
 	}, nil
 }
 
-func (t *transition) writeTo(dst CommandList, conID int64) {
+func (t *transition) writeTo(dst CommandList, conID i3.NodeID) {
 	commands, ok := t.cache[conID]
 	if !ok {
 		commands = make([]string, len(t.frames))
