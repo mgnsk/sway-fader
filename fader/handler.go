@@ -14,11 +14,11 @@ import (
 
 // Fader handles events and triggers fades.
 type Fader struct {
-	frameDur         time.Duration
-	numFrames        int
-	appTransitions   transitionMap
-	classTransitions transitionMap
-	pool             sync.Pool
+	frameDur   time.Duration
+	numFrames  int
+	appFades   fadeList
+	classFades fadeList
+	pool       sync.Pool
 
 	jobs []func()
 }
@@ -59,13 +59,13 @@ func (h *Fader) writeConRequests(dst Frames, con *i3.Node) {
 	}
 
 	if con.AppID != "" {
-		if t := h.appTransitions.find(con.AppID); t != nil {
+		if t := h.appFades.find(con.AppID); t != nil {
 			t.writeTo(dst, con.ID)
 			return
 		}
 	}
 
-	if t := h.classTransitions.find(con.WindowProperties.Class); t != nil {
+	if t := h.classFades.find(con.WindowProperties.Class); t != nil {
 		t.writeTo(dst, con.ID)
 	}
 }
@@ -193,8 +193,8 @@ func (build Builder) WithContainerClassFade(r *regexp.Regexp, from, to float64) 
 // Build the handler.
 func (build Builder) Build() *Fader {
 	o := options{
-		fps:     60.0,
-		fadeDur: 200 * time.Millisecond,
+		fps:     DefaultFPS,
+		fadeDur: DefaultDuration,
 	}
 
 	build(&o)
@@ -202,23 +202,24 @@ func (build Builder) Build() *Fader {
 	frameDur := time.Duration((1.0 / o.fps) * float64(time.Second))
 	numFrames := int(o.fadeDur / frameDur)
 
-	appTransitions := transitionMap{}
-	classTransitions := transitionMap{}
+	appFades := fadeList{}
+	classFades := fadeList{}
 
 	for _, opt := range o.transitions {
-		t := newTransition(opt.from, opt.to, numFrames)
 		if opt.appID != nil {
-			appTransitions[opt.appID] = t
+			appFades = append(appFades, newFade(opt.appID, opt.from, opt.to, numFrames))
 		} else if opt.class != nil {
-			classTransitions[opt.class] = t
+			classFades = append(classFades, newFade(opt.class, opt.from, opt.to, numFrames))
 		}
 	}
 
+	classFades = append(classFades, newFade(regexp.MustCompile(`.*`), DefaultFrom, DefaultTo, numFrames))
+
 	return &Fader{
-		frameDur:         frameDur,
-		numFrames:        numFrames,
-		appTransitions:   appTransitions,
-		classTransitions: classTransitions,
+		frameDur:   frameDur,
+		numFrames:  numFrames,
+		appFades:   appFades,
+		classFades: classFades,
 	}
 }
 

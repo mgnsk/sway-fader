@@ -7,12 +7,24 @@ import (
 	"go.i3wm.org/i3/v4"
 )
 
-type transitionMap map[*regexp.Regexp]*transition
+type fade struct {
+	re *regexp.Regexp
+	t  *transition
+}
 
-func (m transitionMap) find(s string) *transition {
-	for re, t := range m {
-		if re.MatchString(s) {
-			return t
+func newFade(re *regexp.Regexp, from, to float64, steps int) *fade {
+	return &fade{
+		re: re,
+		t:  newTransition(from, to, steps),
+	}
+}
+
+type fadeList []*fade
+
+func (l *fadeList) find(s string) *transition {
+	for _, f := range *l {
+		if f.re.MatchString(s) {
+			return f.t
 		}
 	}
 	return nil
