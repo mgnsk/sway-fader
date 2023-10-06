@@ -60,13 +60,13 @@ func (h *Fader) writeConRequests(dst Frames, con *i3.Node) {
 
 	if con.AppID != "" {
 		if t := h.appFades.find(con.AppID); t != nil {
-			t.writeTo(dst, con.ID)
+			t.writeTo(dst, int64(con.ID))
 			return
 		}
 	}
 
 	if t := h.classFades.find(con.WindowProperties.Class); t != nil {
-		t.writeTo(dst, con.ID)
+		t.writeTo(dst, int64(con.ID))
 	}
 }
 

@@ -6,6 +6,6 @@ import "time"
 const (
 	DefaultFrom     = 0.7
 	DefaultTo       = 1.0
-	DefaultFPS      = 60.0
+	DefaultFPS      = 120.0
 	DefaultDuration = 200 * time.Millisecond
 )
