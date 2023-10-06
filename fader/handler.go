@@ -147,7 +147,9 @@ func (build Builder) WithFadeDuration(d time.Duration) Builder {
 	return func(o *options) {
 		build(o)
 
-		o.fadeDur = d
+		if d > 0 {
+			o.fadeDur = d
+		}
 	}
 }
 
