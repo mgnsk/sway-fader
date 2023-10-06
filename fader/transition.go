@@ -7,36 +7,29 @@ import (
 	"go.i3wm.org/i3/v4"
 )
 
+type transitionMap map[*regexp.Regexp]*transition
+
+func (m transitionMap) find(s string) *transition {
+	for re, t := range m {
+		if re.MatchString(s) {
+			return t
+		}
+	}
+	return nil
+}
+
 const cacheSize = 64
 
+func newTransition(from, to float64, steps int) *transition {
+	return &transition{
+		frames: calcFrames(from, to, steps),
+		cache:  make(map[i3.NodeID][]string, cacheSize),
+	}
+}
+
 type transition struct {
-	appID  *regexp.Regexp
-	class  *regexp.Regexp
 	frames []float64
 	cache  map[i3.NodeID][]string
-}
-
-func newAppTransition(appID *regexp.Regexp, from, to float64, steps int) (*transition, error) {
-	return &transition{
-		appID:  appID,
-		frames: calcFrames(from, to, steps),
-		cache:  make(map[i3.NodeID][]string, cacheSize),
-	}, nil
-}
-
-func newClassTransition(class *regexp.Regexp, from, to float64, steps int) (*transition, error) {
-	return &transition{
-		class:  class,
-		frames: calcFrames(from, to, steps),
-		cache:  make(map[i3.NodeID][]string, cacheSize),
-	}, nil
-}
-
-func newTransition(from, to float64, steps int) (*transition, error) {
-	return &transition{
-		frames: calcFrames(from, to, steps),
-		cache:  make(map[i3.NodeID][]string, cacheSize),
-	}, nil
 }
 
 func (t *transition) writeTo(dst Frames, conID i3.NodeID) {
@@ -58,26 +51,6 @@ func (t *transition) writeTo(dst Frames, conID i3.NodeID) {
 	for i, cmd := range commands {
 		dst[i].WriteString(cmd)
 	}
-}
-
-type transitionList []*transition
-
-func (list transitionList) findByAppID(appID string) *transition {
-	for _, s := range list {
-		if s.appID != nil && s.appID.MatchString(appID) {
-			return s
-		}
-	}
-	return nil
-}
-
-func (list transitionList) findByClass(class string) *transition {
-	for _, s := range list {
-		if s.class != nil && s.class.MatchString(class) {
-			return s
-		}
-	}
-	return nil
 }
 
 func calcFrames(from, to float64, steps int) []float64 {

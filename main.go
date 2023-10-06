@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -60,16 +61,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 `,
 	RunE: func(c *cobra.Command, args []string) error {
-		b := fader.NewHandler(fps, fadeDuration)
-
-		b = b.WithContainerClassFade(".*", defaultFrom, defaultTo)
+		builder := fader.New().WithFPS(fps).WithFadeDuration(fadeDuration)
 
 		for _, target := range appIDTargets {
 			sel, from, to, err := parseTarget(target)
 			if err != nil {
 				return err
 			}
-			b = b.WithContainerAppIDFade(sel, from, to)
+			re, err := regexp.Compile(sel)
+			if err != nil {
+				return err
+			}
+			builder = builder.WithContainerAppIDFade(re, from, to)
 		}
 
 		for _, target := range classTargets {
@@ -77,26 +80,39 @@ SOFTWARE.
 			if err != nil {
 				return err
 			}
-			b = b.WithContainerClassFade(sel, from, to)
+			re, err := regexp.Compile(sel)
+			if err != nil {
+				return err
+			}
+			builder = builder.WithContainerClassFade(re, from, to)
 		}
 
-		h, err := b.Build()
+		builder = builder.WithContainerClassFade(regexp.MustCompile(".*"), defaultFrom, defaultTo)
+		f := builder.Build()
+
+		socketPath, err := getSocketPath()
 		if err != nil {
 			return err
 		}
 
 		i3.SocketPathHook = func() (string, error) {
-			if _, err := exec.LookPath("sway"); err == nil {
-				out, err := exec.Command("sway", "--get-socketpath").CombinedOutput()
-				return string(out), err
+			return socketPath, nil
+		}
+
+		// Fade in the focused workspace.
+		{
+			tree, err := i3.GetTree()
+			if err != nil {
+				return err
 			}
 
-			if _, err := exec.LookPath("i3"); err == nil {
-				out, err := exec.Command("i3", "--get-socketpath").CombinedOutput()
-				return string(out), err
-			}
-
-			return "", fmt.Errorf("could not find neither sway or i3 executable")
+			fader.WalkTree(tree.Root, func(node *i3.Node) bool {
+				if node.Type == i3.Con && node.Focused {
+					f.WorkspaceFocus(node)
+					return false
+				}
+				return true
+			})
 		}
 
 		go func() {
@@ -104,9 +120,13 @@ SOFTWARE.
 			for r.Next() {
 				switch ev := r.Event().(type) {
 				case *i3.WorkspaceEvent:
-					h.Workspace(ev)
+					if ev.Change == "focus" {
+						f.WorkspaceFocus(&ev.Current)
+					}
 				case *i3.WindowEvent:
-					h.Window(ev)
+					if ev.Change == "new" {
+						f.WindowNew(&ev.Container)
+					}
 				}
 			}
 			log.Fatal(r.Close())
@@ -142,4 +162,18 @@ func parseTarget(flagValue string) (selector string, from, to float64, err error
 	}
 
 	return parts[0], from, to, nil
+}
+
+func getSocketPath() (string, error) {
+	if _, err := exec.LookPath("sway"); err == nil {
+		out, err := exec.Command("sway", "--get-socketpath").CombinedOutput()
+		return string(out), err
+	}
+
+	if _, err := exec.LookPath("i3"); err == nil {
+		out, err := exec.Command("i3", "--get-socketpath").CombinedOutput()
+		return string(out), err
+	}
+
+	return "", fmt.Errorf("could not find sway or i3 executable")
 }

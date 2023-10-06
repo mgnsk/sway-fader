@@ -1,16 +1,25 @@
 # sway-fader
 
-sway-fader fades in windows on workspace switch and window creation.
-
-Example config in ~/.config/sway/config to keep `foot` terminal transparent and other windows opaque:
-
-```
-for_window [app_id="foot"] opacity 0.97
-exec sway-fader --app_id="foot:0.7:0.97"
-```
+sway-fader fades in sway or i3 windows on workspace focus and window new events.
 
 # Install
 
 ```
 go install github.com/mgnsk/sway-fader@latest
+```
+
+# Configuration
+
+```
+exec sway-fader
+```
+
+By default a rule of `--class=".*:0.7:1.0"` is applied which can be overridden by user specified flags.
+
+# Advanced config
+
+Example config in ~/.config/sway/config to keep `foot` terminal transparent and other windows opaque:
+
+```
+exec sway-fader --app_id="foot:0.7:0.97"
 ```

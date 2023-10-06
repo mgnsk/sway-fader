@@ -12,12 +12,13 @@ import (
 	"go.i3wm.org/i3/v4"
 )
 
-// SwayEventHandler handles events and triggers fades.
-type SwayEventHandler struct {
-	frameDur    time.Duration
-	numFrames   int
-	transitions transitionList
-	pool        sync.Pool
+// Fader handles events and triggers fades.
+type Fader struct {
+	frameDur         time.Duration
+	numFrames        int
+	appTransitions   transitionMap
+	classTransitions transitionMap
+	pool             sync.Pool
 
 	jobs []func()
 }
@@ -25,64 +26,51 @@ type SwayEventHandler struct {
 // Frames is a command buffer for each frame.
 type Frames []*bytes.Buffer
 
-// Window handles window creation events.
-func (h *SwayEventHandler) Window(e *i3.WindowEvent) {
-	if e.Change == "new" {
-		frames := h.getBuffer()
+// WindowNew handles window new event.
+func (h *Fader) WindowNew(window *i3.Node) {
+	frames := h.getBuffer()
 
-		h.writeConRequests(frames, &e.Container)
-		h.jobs = append(h.jobs, h.createJob(frames))
-	}
+	h.writeConRequests(frames, window)
+	h.runJob(frames)
 }
 
-// Workspace handles workspace focus events.
-func (h *SwayEventHandler) Workspace(e *i3.WorkspaceEvent) {
-	if e.Change == "focus" {
-		for _, stop := range h.jobs {
-			stop()
+// WorkspaceFocus handles workspace focus event.
+func (h *Fader) WorkspaceFocus(workspace *i3.Node) {
+	for _, stop := range h.jobs {
+		stop()
+	}
+	h.jobs = h.jobs[:0]
+
+	frames := h.getBuffer()
+
+	WalkTree(workspace, func(node *i3.Node) bool {
+		if node.Type == i3.Con {
+			h.writeConRequests(frames, node)
 		}
-		h.jobs = h.jobs[:0]
+		return true
+	})
 
-		frames := h.getBuffer()
-
-		walkTree(&e.Current, func(node *i3.Node) {
-			if node.Type == i3.Con {
-				h.writeConRequests(frames, node)
-			}
-		})
-
-		h.jobs = append(h.jobs, h.createJob(frames))
-	}
+	h.runJob(frames)
 }
 
-func walkTree(node *i3.Node, f func(node *i3.Node)) {
-	f(node)
-
-	for _, n := range node.Nodes {
-		walkTree(n, f)
-	}
-}
-
-func (h *SwayEventHandler) writeConRequests(dst Frames, con *i3.Node) {
+func (h *Fader) writeConRequests(dst Frames, con *i3.Node) {
 	if con.Type != i3.Con {
 		panic(`createConRequests: expected node type "con"`)
 	}
 
 	if con.AppID != "" {
-		if t := h.transitions.findByAppID(con.AppID); t != nil {
+		if t := h.appTransitions.find(con.AppID); t != nil {
 			t.writeTo(dst, con.ID)
 			return
 		}
 	}
 
-	if t := h.transitions.findByClass(con.WindowProperties.Class); t != nil {
+	if t := h.classTransitions.find(con.WindowProperties.Class); t != nil {
 		t.writeTo(dst, con.ID)
 	}
 }
 
-// createJob runs a job and returns a callback which cancels the job
-// and waits for pending requests to finish.
-func (h *SwayEventHandler) createJob(frames Frames) (stop func()) {
+func (h *Fader) runJob(frames Frames) {
 	wg := sync.WaitGroup{}
 	done := make(chan struct{})
 
@@ -111,13 +99,13 @@ func (h *SwayEventHandler) createJob(frames Frames) (stop func()) {
 		}
 	}()
 
-	return func() {
+	h.jobs = append(h.jobs, func() {
 		close(done)
 		wg.Wait()
-	}
+	})
 }
 
-func (h *SwayEventHandler) getBuffer() Frames {
+func (h *Fader) getBuffer() Frames {
 	frames, ok := h.pool.Get().(Frames)
 	if !ok {
 		frames = make(Frames, h.numFrames)
@@ -128,7 +116,7 @@ func (h *SwayEventHandler) getBuffer() Frames {
 	return frames
 }
 
-func (h *SwayEventHandler) putBuffer(frames Frames) {
+func (h *Fader) putBuffer(frames Frames) {
 	for _, buf := range frames {
 		buf.Reset()
 	}
@@ -146,105 +134,105 @@ type transitionOptions struct {
 	from, to     float64
 }
 
-// Builder builds a handler.
-type Builder func(*options) error
+// Builder builds a fader.
+type Builder func(*options)
 
-// NewHandler creates a new event handler.
-func NewHandler(fps float64, fadeDur time.Duration) Builder {
-	return func(o *options) error {
-		o.fps = fps
-		o.fadeDur = fadeDur
+// New creates a new fader.
+func New() Builder {
+	return func(o *options) {}
+}
 
-		return nil
+// WithFadeDuration configures the fade duration.
+func (build Builder) WithFadeDuration(d time.Duration) Builder {
+	return func(o *options) {
+		build(o)
+
+		o.fadeDur = d
+	}
+}
+
+// WithFPS configures the framerate for transitions.
+func (build Builder) WithFPS(fps float64) Builder {
+	return func(o *options) {
+		build(o)
+
+		if fps > 0 {
+			o.fps = fps
+		}
 	}
 }
 
 // WithContainerAppIDFade configures a container's opacities by app_id.
-func (build Builder) WithContainerAppIDFade(appIDRegex string, from, to float64) Builder {
-	return func(o *options) error {
-		if err := build(o); err != nil {
-			return err
-		}
-
-		r, err := regexp.Compile(appIDRegex)
-		if err != nil {
-			return err
-		}
+func (build Builder) WithContainerAppIDFade(r *regexp.Regexp, from, to float64) Builder {
+	return func(o *options) {
+		build(o)
 
 		o.transitions = append(o.transitions, transitionOptions{
 			appID: r,
 			from:  from,
 			to:    to,
 		})
-
-		return nil
 	}
 }
 
 // WithContainerClassFade configures a container's opacities by class.
-func (build Builder) WithContainerClassFade(classRegex string, from, to float64) Builder {
-	return func(o *options) error {
-		if err := build(o); err != nil {
-			return err
-		}
-
-		r, err := regexp.Compile(classRegex)
-		if err != nil {
-			return err
-		}
+func (build Builder) WithContainerClassFade(r *regexp.Regexp, from, to float64) Builder {
+	return func(o *options) {
+		build(o)
 
 		o.transitions = append(o.transitions, transitionOptions{
 			class: r,
 			from:  from,
 			to:    to,
 		})
-
-		return nil
 	}
 }
 
 // Build the handler.
-func (build Builder) Build() (*SwayEventHandler, error) {
-	o := options{}
-	if err := build(&o); err != nil {
-		return nil, err
+func (build Builder) Build() *Fader {
+	o := options{
+		fps:     60.0,
+		fadeDur: 200 * time.Millisecond,
 	}
+
+	build(&o)
 
 	frameDur := time.Duration((1.0 / o.fps) * float64(time.Second))
 	numFrames := int(o.fadeDur / frameDur)
 
-	list := make(transitionList, len(o.transitions))
+	appTransitions := transitionMap{}
+	classTransitions := transitionMap{}
 
-	for i, opt := range o.transitions {
+	for _, opt := range o.transitions {
+		t := newTransition(opt.from, opt.to, numFrames)
 		if opt.appID != nil {
-			tr, err := newAppTransition(opt.appID, opt.from, opt.to, numFrames)
-			if err != nil {
-				return nil, err
-			}
-			list[i] = tr
+			appTransitions[opt.appID] = t
 		} else if opt.class != nil {
-			tr, err := newClassTransition(opt.class, opt.from, opt.to, numFrames)
-			if err != nil {
-				return nil, err
-			}
-			list[i] = tr
+			classTransitions[opt.class] = t
 		}
 	}
 
-	return &SwayEventHandler{
-		frameDur:    frameDur,
-		numFrames:   numFrames,
-		transitions: list,
-		pool: sync.Pool{
-			New: func() any {
-				frames := make(Frames, numFrames)
-				for i := 0; i < numFrames; i++ {
-					frames[i] = &bytes.Buffer{}
-				}
-				return frames
-			},
-		},
-	}, nil
+	return &Fader{
+		frameDur:         frameDur,
+		numFrames:        numFrames,
+		appTransitions:   appTransitions,
+		classTransitions: classTransitions,
+	}
+}
+
+// WalkTree walks i3 node tree.
+func WalkTree(node *i3.Node, f func(node *i3.Node) bool) bool {
+	if !f(node) {
+		return false
+	}
+
+	for _, n := range node.Nodes {
+		if !WalkTree(n, f) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // bytesToString returns an unsafe string using the underlying slice.
