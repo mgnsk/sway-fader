@@ -1,12 +1,13 @@
 package fader
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"go.i3wm.org/i3/v4"
 )
@@ -16,40 +17,41 @@ type SwayEventHandler struct {
 	frameDur    time.Duration
 	numFrames   int
 	transitions transitionList
+	pool        sync.Pool
 
 	jobs []func()
 }
 
-// CommandList is a list of commands.
-type CommandList []strings.Builder
+// Frames is a command buffer for each frame.
+type Frames []*bytes.Buffer
 
 // Window handles window creation events.
 func (h *SwayEventHandler) Window(e *i3.WindowEvent) {
-	switch e.Change {
-	case "new":
-		requests := make(CommandList, h.numFrames)
-		h.createConRequests(requests, &e.Container)
-		h.jobs = append(h.jobs, h.createJob(requests))
+	if e.Change == "new" {
+		frames := h.getBuffer()
+
+		h.writeConRequests(frames, &e.Container)
+		h.jobs = append(h.jobs, h.createJob(frames))
 	}
 }
 
 // Workspace handles workspace focus events.
 func (h *SwayEventHandler) Workspace(e *i3.WorkspaceEvent) {
-	switch e.Change {
-	case "focus":
+	if e.Change == "focus" {
 		for _, stop := range h.jobs {
 			stop()
 		}
 		h.jobs = h.jobs[:0]
 
-		requests := make(CommandList, h.numFrames)
+		frames := h.getBuffer()
+
 		walkTree(&e.Current, func(node *i3.Node) {
 			if node.Type == i3.Con {
-				h.createConRequests(requests, node)
+				h.writeConRequests(frames, node)
 			}
 		})
 
-		h.jobs = append(h.jobs, h.createJob(requests))
+		h.jobs = append(h.jobs, h.createJob(frames))
 	}
 }
 
@@ -61,7 +63,7 @@ func walkTree(node *i3.Node, f func(node *i3.Node)) {
 	}
 }
 
-func (h *SwayEventHandler) createConRequests(dst CommandList, con *i3.Node) {
+func (h *SwayEventHandler) writeConRequests(dst Frames, con *i3.Node) {
 	if con.Type != i3.Con {
 		panic(`createConRequests: expected node type "con"`)
 	}
@@ -80,28 +82,29 @@ func (h *SwayEventHandler) createConRequests(dst CommandList, con *i3.Node) {
 
 // createJob runs a job and returns a callback which cancels the job
 // and waits for pending requests to finish.
-func (h *SwayEventHandler) createJob(cmdList CommandList) (stop func()) {
+func (h *SwayEventHandler) createJob(frames Frames) (stop func()) {
 	wg := sync.WaitGroup{}
 	done := make(chan struct{})
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer h.putBuffer(frames)
 
 		// Run first command immediately and reset ticker for next frame.
-		if _, err := i3.RunCommand(cmdList[0].String()); err != nil {
+		if _, err := i3.RunCommand(bytesToString(frames[0].Bytes())); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 		}
 
 		ticker := time.NewTicker(h.frameDur)
 		defer ticker.Stop()
 
-		for _, cmd := range cmdList[1:] {
+		for _, frame := range frames[1:] {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
-				if _, err := i3.RunCommand(cmd.String()); err != nil {
+				if _, err := i3.RunCommand(bytesToString(frame.Bytes())); err != nil {
 					fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 				}
 			}
@@ -112,6 +115,24 @@ func (h *SwayEventHandler) createJob(cmdList CommandList) (stop func()) {
 		close(done)
 		wg.Wait()
 	}
+}
+
+func (h *SwayEventHandler) getBuffer() Frames {
+	frames, ok := h.pool.Get().(Frames)
+	if !ok {
+		frames = make(Frames, h.numFrames)
+		for i := 0; i < h.numFrames; i++ {
+			frames[i] = &bytes.Buffer{}
+		}
+	}
+	return frames
+}
+
+func (h *SwayEventHandler) putBuffer(frames Frames) {
+	for _, buf := range frames {
+		buf.Reset()
+	}
+	h.pool.Put(frames)
 }
 
 type options struct {
@@ -214,5 +235,19 @@ func (build Builder) Build() (*SwayEventHandler, error) {
 		frameDur:    frameDur,
 		numFrames:   numFrames,
 		transitions: list,
+		pool: sync.Pool{
+			New: func() any {
+				frames := make(Frames, numFrames)
+				for i := 0; i < numFrames; i++ {
+					frames[i] = &bytes.Buffer{}
+				}
+				return frames
+			},
+		},
 	}, nil
+}
+
+// bytesToString returns an unsafe string using the underlying slice.
+func bytesToString(b []byte) string {
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }

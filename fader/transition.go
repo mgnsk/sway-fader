@@ -39,7 +39,7 @@ func newTransition(from, to float64, steps int) (*transition, error) {
 	}, nil
 }
 
-func (t *transition) writeTo(dst CommandList, conID i3.NodeID) {
+func (t *transition) writeTo(dst Frames, conID i3.NodeID) {
 	commands, ok := t.cache[conID]
 	if !ok {
 		commands = make([]string, len(t.frames))

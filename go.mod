@@ -10,6 +10,7 @@ require (
 require (
 	github.com/BurntSushi/xgb v0.0.0-20210121224620-deaf085860bc // indirect
 	github.com/BurntSushi/xgbutil v0.0.0-20190907113008-ad855c713046 // indirect
+	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/inconshreveable/mousetrap v1.0.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	golang.org/x/sync v0.0.0-20190412183630-56d357773e84 // indirect
