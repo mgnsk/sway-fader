@@ -28,10 +28,11 @@ type Frames []*bytes.Buffer
 
 // WindowNew handles window new event.
 func (h *Fader) WindowNew(window *i3.Node) {
-	frames := h.getBuffer()
-
-	h.writeConRequests(frames, window)
-	h.runJob(frames)
+	if t := h.getTransition(window); t != nil {
+		frames := h.getFrames()
+		t.writeTo(frames, int64(window.ID))
+		h.runJob(frames)
+	}
 }
 
 // WorkspaceFocus handles workspace focus event.
@@ -41,33 +42,38 @@ func (h *Fader) WorkspaceFocus(workspace *i3.Node) {
 	}
 	h.jobs = h.jobs[:0]
 
-	frames := h.getBuffer()
+	transitions := map[int64]*transition{}
 
 	WalkTree(workspace, func(node *i3.Node) bool {
 		if node.Type == i3.Con {
-			h.writeConRequests(frames, node)
+			if t := h.getTransition(node); t != nil {
+				transitions[int64(node.ID)] = t
+			}
 		}
 		return true
 	})
 
-	h.runJob(frames)
+	if len(transitions) > 0 {
+		frames := h.getFrames()
+		for nodeID, t := range transitions {
+			t.writeTo(frames, nodeID)
+		}
+		h.runJob(frames)
+	}
 }
 
-func (h *Fader) writeConRequests(dst Frames, con *i3.Node) {
+func (h *Fader) getTransition(con *i3.Node) *transition {
 	if con.Type != i3.Con {
 		panic(`createConRequests: expected node type "con"`)
 	}
 
 	if con.AppID != "" {
 		if t := h.appFades.find(con.AppID); t != nil {
-			t.writeTo(dst, int64(con.ID))
-			return
+			return t
 		}
 	}
 
-	if t := h.classFades.find(con.WindowProperties.Class); t != nil {
-		t.writeTo(dst, int64(con.ID))
-	}
+	return h.classFades.find(con.WindowProperties.Class)
 }
 
 func (h *Fader) runJob(frames Frames) {
@@ -77,7 +83,7 @@ func (h *Fader) runJob(frames Frames) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer h.putBuffer(frames)
+		defer h.putFrames(frames)
 
 		// Run first command immediately and reset ticker for next frame.
 		if _, err := i3.RunCommand(bytesToString(frames[0].Bytes())); err != nil {
@@ -105,23 +111,25 @@ func (h *Fader) runJob(frames Frames) {
 	})
 }
 
-func (h *Fader) getBuffer() Frames {
-	frames, ok := h.pool.Get().(Frames)
-	if !ok {
-		frames = make(Frames, h.numFrames)
-		for i := 0; i < h.numFrames; i++ {
-			frames[i] = &bytes.Buffer{}
-		}
+func (h *Fader) getFrames() Frames {
+	frames := make(Frames, h.numFrames)
+	for i := 0; i < h.numFrames; i++ {
+		buf := h.pool.Get().(*bytes.Buffer)
+		buf.Reset()
+		frames[i] = buf
 	}
 	return frames
 }
 
-func (h *Fader) putBuffer(frames Frames) {
+func (h *Fader) putFrames(frames Frames) {
 	for _, buf := range frames {
-		buf.Reset()
+		h.pool.Put(buf)
 	}
-	h.pool.Put(frames)
 }
+
+// commandSize is an estimated command string length
+// for preallocation.
+const commandSize = 64
 
 type options struct {
 	fps         float64
@@ -220,6 +228,11 @@ func (build Builder) Build() *Fader {
 		numFrames:  numFrames,
 		appFades:   appFades,
 		classFades: classFades,
+		pool: sync.Pool{
+			New: func() any {
+				return &bytes.Buffer{}
+			},
+		},
 	}
 }
 

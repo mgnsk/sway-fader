@@ -1,6 +1,7 @@
 package fader
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 )
@@ -42,7 +43,7 @@ type transition struct {
 	cache  map[int64][]string
 }
 
-func (t *transition) writeTo(dst Frames, conID int64) {
+func (t *transition) writeTo(dst []*bytes.Buffer, conID int64) {
 	commands, ok := t.cache[conID]
 	if !ok {
 		commands = make([]string, len(t.frames))
