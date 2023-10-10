@@ -9,9 +9,9 @@ import (
 	"go.i3wm.org/i3/v4"
 )
 
-func newFadeJob(frames Frames, frameDur time.Duration) *fadeJob {
+func newFadeJob(commands []string, frameDur time.Duration) *fadeJob {
 	j := &fadeJob{
-		frames:   frames,
+		commands: commands,
 		done:     make(chan struct{}),
 		frameDur: frameDur,
 	}
@@ -22,7 +22,7 @@ func newFadeJob(frames Frames, frameDur time.Duration) *fadeJob {
 }
 
 type fadeJob struct {
-	frames   Frames
+	commands []string
 	done     chan struct{}
 	wg       sync.WaitGroup
 	frameDur time.Duration
@@ -32,19 +32,19 @@ func (j *fadeJob) run() {
 	defer j.wg.Done()
 
 	// Run first command immediately and reset ticker for next frame.
-	if _, err := i3.RunCommand(bytesToString(j.frames[0].Bytes())); err != nil {
+	if _, err := i3.RunCommand(j.commands[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 	}
 
 	ticker := time.NewTicker(j.frameDur)
 	defer ticker.Stop()
 
-	for _, frame := range j.frames[1:] {
+	for _, cmd := range j.commands[1:] {
 		select {
 		case <-j.done:
 			return
 		case <-ticker.C:
-			if _, err := i3.RunCommand(bytesToString(frame.Bytes())); err != nil {
+			if _, err := i3.RunCommand(cmd); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %s", err.Error())
 			}
 		}

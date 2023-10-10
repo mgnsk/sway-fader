@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -21,7 +20,6 @@ type Fader struct {
 	numFrames  int
 	appFades   fadeList
 	classFades fadeList
-	pool       sync.Pool
 	cache      map[i3.NodeID][]string
 	running    map[i3.NodeID]*fadeJob
 }
@@ -34,26 +32,14 @@ func (h *Fader) RunFade(node *i3.Node) {
 
 	if job, ok := h.running[node.ID]; ok {
 		job.stop()
-		h.putFrames(job.frames)
 	}
 
 	if t := h.getTransition(node); t != nil {
-		frames := h.getTransitionFrames(t, node.ID)
-		job := newFadeJob(frames, h.frameDur)
+		commands := h.getCommands(t, node.ID)
+		job := newFadeJob(commands, h.frameDur)
 		go job.run()
 		h.running[node.ID] = job
 	}
-}
-
-func (h *Fader) getTransitionFrames(t transition, conID i3.NodeID) Frames {
-	commands := h.getCommands(t, conID)
-	frames := h.getFrames()
-
-	for i, cmd := range commands {
-		frames[i].WriteString(cmd)
-	}
-
-	return frames
 }
 
 func (h *Fader) getTransition(con *i3.Node) transition {
@@ -69,32 +55,14 @@ func (h *Fader) getTransition(con *i3.Node) transition {
 func (h *Fader) getCommands(t transition, conID i3.NodeID) []string {
 	commands, ok := h.cache[conID]
 	if !ok {
-		commands = make([]string, len(t))
-
-		for i, opacity := range t {
-			commands[i] = fmt.Sprintf(`[con_id=%d] opacity %.4f;`, conID, opacity)
+		for _, opacity := range t {
+			commands = append(commands, fmt.Sprintf(`[con_id=%d] opacity %.4f;`, conID, opacity))
 		}
 
 		h.cache[conID] = commands
 	}
 
 	return commands
-}
-
-func (h *Fader) getFrames() Frames {
-	frames := make(Frames, h.numFrames)
-	for i := 0; i < h.numFrames; i++ {
-		buf := h.pool.Get().(*bytes.Buffer)
-		buf.Reset()
-		frames[i] = buf
-	}
-	return frames
-}
-
-func (h *Fader) putFrames(frames Frames) {
-	for _, buf := range frames {
-		h.pool.Put(buf)
-	}
 }
 
 var defaultEaseFn = ease.Linear
@@ -201,13 +169,8 @@ func (build Builder) Build() *Fader {
 		numFrames:  numFrames,
 		appFades:   appFades,
 		classFades: classFades,
-		pool: sync.Pool{
-			New: func() any {
-				return &bytes.Buffer{}
-			},
-		},
-		cache:   map[i3.NodeID][]string{},
-		running: map[i3.NodeID]*fadeJob{},
+		cache:      map[i3.NodeID][]string{},
+		running:    map[i3.NodeID]*fadeJob{},
 	}
 }
 
