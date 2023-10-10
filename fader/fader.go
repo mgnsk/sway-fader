@@ -3,70 +3,60 @@ package fader
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"regexp"
 	"sync"
 	"time"
 	"unsafe"
 
+	"github.com/fogleman/ease"
 	"go.i3wm.org/i3/v4"
 )
 
-// Fader handles events and triggers fades.
+// Frames is a command buffer for each frame.
+type Frames []*bytes.Buffer
+
+// Fader runs fades on containers.
 type Fader struct {
 	frameDur   time.Duration
 	numFrames  int
 	appFades   fadeList
 	classFades fadeList
 	pool       sync.Pool
-
-	jobs []func()
+	cache      map[i3.NodeID][]string
+	running    map[i3.NodeID]*fadeJob
 }
 
-// Frames is a command buffer for each frame.
-type Frames []*bytes.Buffer
-
-// WindowNew handles window new event.
-func (h *Fader) WindowNew(window *i3.Node) {
-	if t := h.getTransition(window); t != nil {
-		frames := h.getFrames()
-		t.writeTo(frames, int64(window.ID))
-		h.runJob(frames)
+// RunFade runs a preconfigured fade on container.
+func (h *Fader) RunFade(node *i3.Node) {
+	if node.Type != i3.Con {
+		panic(fmt.Sprintf("createConRequests: expected node type 'con', got %s", node.Type))
 	}
-}
 
-// WorkspaceFocus handles workspace focus event.
-func (h *Fader) WorkspaceFocus(workspace *i3.Node) {
-	for _, stop := range h.jobs {
-		stop()
+	if job, ok := h.running[node.ID]; ok {
+		job.stop()
+		h.putFrames(job.frames)
 	}
-	h.jobs = h.jobs[:0]
 
-	transitions := map[int64]*transition{}
-
-	WalkTree(workspace, func(node *i3.Node) bool {
-		if node.Type == i3.Con {
-			if t := h.getTransition(node); t != nil {
-				transitions[int64(node.ID)] = t
-			}
-		}
-		return true
-	})
-
-	if len(transitions) > 0 {
-		frames := h.getFrames()
-		for nodeID, t := range transitions {
-			t.writeTo(frames, nodeID)
-		}
-		h.runJob(frames)
+	if t := h.getTransition(node); t != nil {
+		frames := h.getTransitionFrames(t, node.ID)
+		job := newFadeJob(frames, h.frameDur)
+		go job.run()
+		h.running[node.ID] = job
 	}
 }
 
-func (h *Fader) getTransition(con *i3.Node) *transition {
-	if con.Type != i3.Con {
-		panic(`createConRequests: expected node type "con"`)
+func (h *Fader) getTransitionFrames(t transition, conID i3.NodeID) Frames {
+	commands := h.getCommands(t, conID)
+	frames := h.getFrames()
+
+	for i, cmd := range commands {
+		frames[i].WriteString(cmd)
 	}
 
+	return frames
+}
+
+func (h *Fader) getTransition(con *i3.Node) transition {
 	if con.AppID != "" {
 		if t := h.appFades.find(con.AppID); t != nil {
 			return t
@@ -76,39 +66,19 @@ func (h *Fader) getTransition(con *i3.Node) *transition {
 	return h.classFades.find(con.WindowProperties.Class)
 }
 
-func (h *Fader) runJob(frames Frames) {
-	wg := sync.WaitGroup{}
-	done := make(chan struct{})
+func (h *Fader) getCommands(t transition, conID i3.NodeID) []string {
+	commands, ok := h.cache[conID]
+	if !ok {
+		commands = make([]string, len(t))
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer h.putFrames(frames)
-
-		// Run first command immediately and reset ticker for next frame.
-		if _, err := i3.RunCommand(bytesToString(frames[0].Bytes())); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s", err.Error())
+		for i, opacity := range t {
+			commands[i] = fmt.Sprintf(`[con_id=%d] opacity %.4f;`, conID, opacity)
 		}
 
-		ticker := time.NewTicker(h.frameDur)
-		defer ticker.Stop()
+		h.cache[conID] = commands
+	}
 
-		for _, frame := range frames[1:] {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				if _, err := i3.RunCommand(bytesToString(frame.Bytes())); err != nil {
-					fmt.Fprintf(os.Stderr, "error: %s", err.Error())
-				}
-			}
-		}
-	}()
-
-	h.jobs = append(h.jobs, func() {
-		close(done)
-		wg.Wait()
-	})
+	return commands
 }
 
 func (h *Fader) getFrames() Frames {
@@ -127,9 +97,7 @@ func (h *Fader) putFrames(frames Frames) {
 	}
 }
 
-// commandSize is an estimated command string length
-// for preallocation.
-const commandSize = 64
+var defaultEaseFn = ease.Linear
 
 type options struct {
 	fps         float64
@@ -140,6 +108,11 @@ type options struct {
 type transitionOptions struct {
 	appID, class *regexp.Regexp
 	from, to     float64
+	ease         string
+}
+
+func (transitionOptions) getEaseFunction() easeFunction {
+	return defaultEaseFn
 }
 
 // Builder builds a fader.
@@ -215,13 +188,13 @@ func (build Builder) Build() *Fader {
 
 	for _, opt := range o.transitions {
 		if opt.appID != nil {
-			appFades = append(appFades, newFade(opt.appID, opt.from, opt.to, numFrames))
+			appFades = append(appFades, newFade(opt.appID, opt.from, opt.to, numFrames, opt.getEaseFunction()))
 		} else if opt.class != nil {
-			classFades = append(classFades, newFade(opt.class, opt.from, opt.to, numFrames))
+			classFades = append(classFades, newFade(opt.class, opt.from, opt.to, numFrames, opt.getEaseFunction()))
 		}
 	}
 
-	classFades = append(classFades, newFade(regexp.MustCompile(`.*`), DefaultFrom, DefaultTo, numFrames))
+	classFades = append(classFades, newFade(regexp.MustCompile(`.*`), DefaultFrom, DefaultTo, numFrames, defaultEaseFn))
 
 	return &Fader{
 		frameDur:   frameDur,
@@ -233,6 +206,8 @@ func (build Builder) Build() *Fader {
 				return &bytes.Buffer{}
 			},
 		},
+		cache:   map[i3.NodeID][]string{},
+		running: map[i3.NodeID]*fadeJob{},
 	}
 }
 

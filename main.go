@@ -73,7 +73,7 @@ var root = &cobra.Command{
 			return socketPath, nil
 		}
 
-		// Fade in the focused workspace.
+		// Fade in all windows.
 		{
 			tree, err := i3.GetTree()
 			if err != nil {
@@ -81,9 +81,8 @@ var root = &cobra.Command{
 			}
 
 			fader.WalkTree(tree.Root, func(node *i3.Node) bool {
-				if node.Type == i3.Con && node.Focused {
-					f.WorkspaceFocus(node)
-					return false
+				if node.Type == i3.Con {
+					f.RunFade(node)
 				}
 				return true
 			})
@@ -93,13 +92,18 @@ var root = &cobra.Command{
 			r := i3.Subscribe(i3.WorkspaceEventType, i3.WindowEventType)
 			for r.Next() {
 				switch ev := r.Event().(type) {
-				case *i3.WorkspaceEvent:
-					if ev.Change == "focus" {
-						f.WorkspaceFocus(&ev.Current)
-					}
 				case *i3.WindowEvent:
 					if ev.Change == "new" {
-						f.WindowNew(&ev.Container)
+						f.RunFade(&ev.Container)
+					}
+				case *i3.WorkspaceEvent:
+					if ev.Change == "focus" {
+						fader.WalkTree(&ev.Current, func(node *i3.Node) bool {
+							if node.Type == i3.Con {
+								f.RunFade(node)
+							}
+							return true
+						})
 					}
 				}
 			}
