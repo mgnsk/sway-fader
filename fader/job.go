@@ -3,7 +3,6 @@ package fader
 import (
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"go.i3wm.org/i3/v4"
@@ -12,24 +11,27 @@ import (
 func newFadeJob(commands []string, frameDur time.Duration) *fadeJob {
 	j := &fadeJob{
 		commands: commands,
+		quit:     make(chan struct{}),
 		done:     make(chan struct{}),
 		frameDur: frameDur,
 	}
-
-	j.wg.Add(1)
 
 	return j
 }
 
 type fadeJob struct {
 	commands []string
+	quit     chan struct{}
 	done     chan struct{}
-	wg       sync.WaitGroup
 	frameDur time.Duration
 }
 
-func (j *fadeJob) run() {
-	defer j.wg.Done()
+func (j *fadeJob) Done() <-chan struct{} {
+	return j.done
+}
+
+func (j *fadeJob) Run() {
+	defer close(j.done)
 
 	// Run first command immediately and reset ticker for next frame.
 	if _, err := i3.RunCommand(j.commands[0]); err != nil {
@@ -41,7 +43,7 @@ func (j *fadeJob) run() {
 
 	for _, cmd := range j.commands[1:] {
 		select {
-		case <-j.done:
+		case <-j.quit:
 			return
 		case <-ticker.C:
 			if _, err := i3.RunCommand(cmd); err != nil {
@@ -51,7 +53,7 @@ func (j *fadeJob) run() {
 	}
 }
 
-func (j *fadeJob) stop() {
-	close(j.done)
-	j.wg.Wait()
+func (j *fadeJob) Stop() {
+	close(j.quit)
+	<-j.done
 }

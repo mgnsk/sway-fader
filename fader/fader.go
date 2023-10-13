@@ -24,21 +24,31 @@ type Fader struct {
 	running    map[i3.NodeID]*fadeJob
 }
 
-// RunFade runs a preconfigured fade on container.
-func (h *Fader) RunFade(node *i3.Node) {
+// StartFade starts a preconfigured fade on container.
+func (h *Fader) StartFade(node *i3.Node) {
 	if node.Type != i3.Con {
 		panic(fmt.Sprintf("createConRequests: expected node type 'con', got %s", node.Type))
 	}
 
 	if job, ok := h.running[node.ID]; ok {
-		job.stop()
+		job.Stop()
+		delete(h.running, node.ID)
+	}
+
+	// Clean up finished jobs.
+	for _, job := range h.running {
+		select {
+		case <-job.Done():
+			delete(h.running, node.ID)
+		default:
+		}
 	}
 
 	if t := h.getTransition(node); t != nil {
 		commands := h.getCommands(t, node.ID)
 		job := newFadeJob(commands, h.frameDur)
-		go job.run()
 		h.running[node.ID] = job
+		go job.Run()
 	}
 }
 
@@ -172,21 +182,6 @@ func (build Builder) Build() *Fader {
 		cache:      map[i3.NodeID][]string{},
 		running:    map[i3.NodeID]*fadeJob{},
 	}
-}
-
-// WalkTree walks i3 node tree.
-func WalkTree(node *i3.Node, f func(node *i3.Node) bool) bool {
-	if !f(node) {
-		return false
-	}
-
-	for _, n := range node.Nodes {
-		if !WalkTree(n, f) {
-			return false
-		}
-	}
-
-	return true
 }
 
 // bytesToString returns an unsafe string using the underlying slice.

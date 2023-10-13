@@ -80,9 +80,9 @@ var root = &cobra.Command{
 				return err
 			}
 
-			fader.WalkTree(tree.Root, func(node *i3.Node) bool {
+			walkTree(tree.Root, func(node *i3.Node) bool {
 				if node.Type == i3.Con {
-					f.RunFade(node)
+					f.StartFade(node)
 				}
 				return true
 			})
@@ -94,13 +94,13 @@ var root = &cobra.Command{
 				switch ev := r.Event().(type) {
 				case *i3.WindowEvent:
 					if ev.Change == "new" {
-						f.RunFade(&ev.Container)
+						f.StartFade(&ev.Container)
 					}
 				case *i3.WorkspaceEvent:
 					if ev.Change == "focus" {
-						fader.WalkTree(&ev.Current, func(node *i3.Node) bool {
+						walkTree(&ev.Current, func(node *i3.Node) bool {
 							if node.Type == i3.Con {
-								f.RunFade(node)
+								f.StartFade(node)
 							}
 							return true
 						})
@@ -154,4 +154,18 @@ func getSocketPath() (string, error) {
 	}
 
 	return "", fmt.Errorf("could not find sway or i3 executable")
+}
+
+func walkTree(node *i3.Node, f func(node *i3.Node) bool) bool {
+	if !f(node) {
+		return false
+	}
+
+	for _, n := range node.Nodes {
+		if !walkTree(n, f) {
+			return false
+		}
+	}
+
+	return true
 }
