@@ -1,8 +1,6 @@
 package fader
 
 import (
-	"fmt"
-	"os"
 	"time"
 
 	"go.i3wm.org/i3/v4"
@@ -30,12 +28,12 @@ func (j *fadeJob) Done() <-chan struct{} {
 	return j.done
 }
 
-func (j *fadeJob) Run() {
+func (j *fadeJob) Run() error {
 	defer close(j.done)
 
 	// Run first command immediately and reset ticker for next frame.
 	if _, err := i3.RunCommand(j.commands[0]); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
+		return err
 	}
 
 	ticker := time.NewTicker(j.frameDur)
@@ -44,13 +42,15 @@ func (j *fadeJob) Run() {
 	for _, cmd := range j.commands[1:] {
 		select {
 		case <-j.quit:
-			return
+			return nil
 		case <-ticker.C:
 			if _, err := i3.RunCommand(cmd); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %s", err.Error())
+				return err
 			}
 		}
 	}
+
+	return nil
 }
 
 func (j *fadeJob) Stop() {

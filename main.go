@@ -33,37 +33,39 @@ func init() {
 	root.PersistentFlags().StringArrayVar(&classTargets, "class", classTargets, `Override fade settings per container class. Format: "regex:from:to". Example: --class="FreeTube:0.7:1.0" --class="Firefox:0.8:1.0"`)
 }
 
+func newFader() (*fader.Fader, error) {
+	builder := fader.New().WithFPS(fps).WithFadeDuration(fadeDuration)
+
+	for _, target := range appIDTargets {
+		sel, from, to, err := parseTarget(target)
+		if err != nil {
+			return nil, err
+		}
+		re, err := regexp.Compile(sel)
+		if err != nil {
+			return nil, err
+		}
+		builder = builder.WithContainerAppIDFade(re, from, to)
+	}
+
+	for _, target := range classTargets {
+		sel, from, to, err := parseTarget(target)
+		if err != nil {
+			return nil, err
+		}
+		re, err := regexp.Compile(sel)
+		if err != nil {
+			return nil, err
+		}
+		builder = builder.WithContainerClassFade(re, from, to)
+	}
+
+	return builder.Build(), nil
+}
+
 var root = &cobra.Command{
 	Short: "sway-fader fades in windows on workspace switch and window creation.",
 	RunE: func(c *cobra.Command, args []string) error {
-		builder := fader.New().WithFPS(fps).WithFadeDuration(fadeDuration)
-
-		for _, target := range appIDTargets {
-			sel, from, to, err := parseTarget(target)
-			if err != nil {
-				return err
-			}
-			re, err := regexp.Compile(sel)
-			if err != nil {
-				return err
-			}
-			builder = builder.WithContainerAppIDFade(re, from, to)
-		}
-
-		for _, target := range classTargets {
-			sel, from, to, err := parseTarget(target)
-			if err != nil {
-				return err
-			}
-			re, err := regexp.Compile(sel)
-			if err != nil {
-				return err
-			}
-			builder = builder.WithContainerClassFade(re, from, to)
-		}
-
-		f := builder.Build()
-
 		socketPath, err := getSocketPath()
 		if err != nil {
 			return err
@@ -73,7 +75,12 @@ var root = &cobra.Command{
 			return socketPath, nil
 		}
 
-		// Fade in all windows.
+		f, err := newFader()
+		if err != nil {
+			return err
+		}
+
+		// Fade in all windows on start.
 		{
 			tree, err := i3.GetTree()
 			if err != nil {

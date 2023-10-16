@@ -3,6 +3,7 @@ package fader
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"regexp"
 	"time"
 	"unsafe"
@@ -48,7 +49,11 @@ func (h *Fader) StartFade(node *i3.Node) {
 		commands := h.getCommands(t, node.ID)
 		job := newFadeJob(commands, h.frameDur)
 		h.running[node.ID] = job
-		go job.Run()
+		go func() {
+			if err := job.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %s", err.Error())
+			}
+		}()
 	}
 }
 
