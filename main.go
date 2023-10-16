@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mgnsk/sway-fader/fader"
+	"github.com/mitchellh/go-ps"
 	"github.com/spf13/cobra"
 	"go.i3wm.org/i3/v4"
 )
@@ -150,17 +152,21 @@ func parseTarget(flagValue string) (selector string, from, to float64, err error
 }
 
 func getSocketPath() (string, error) {
-	if _, err := exec.LookPath("sway"); err == nil {
-		out, err := exec.Command("sway", "--get-socketpath").CombinedOutput()
-		return string(out), err
+	procs, err := ps.Processes()
+	if err != nil {
+		return "", err
 	}
 
-	if _, err := exec.LookPath("i3"); err == nil {
-		out, err := exec.Command("i3", "--get-socketpath").CombinedOutput()
-		return string(out), err
+	for _, wm := range []string{"sway", "i3"} {
+		if slices.ContainsFunc(procs, func(p ps.Process) bool {
+			return p.Executable() == wm
+		}) {
+			out, err := exec.Command(wm, "--get-socketpath").CombinedOutput()
+			return string(out), err
+		}
 	}
 
-	return "", fmt.Errorf("could not find sway or i3 executable")
+	return "", fmt.Errorf("could not find a running sway or i3 process")
 }
 
 func walkTree(node *i3.Node, f func(node *i3.Node) bool) bool {
