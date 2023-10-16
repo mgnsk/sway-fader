@@ -35,38 +35,15 @@ func init() {
 	root.PersistentFlags().StringArrayVar(&classTargets, "class", classTargets, `Override fade settings per container class. Format: "regex:from:to". Example: --class="FreeTube:0.7:1.0" --class="Firefox:0.8:1.0"`)
 }
 
-func newFader() (*fader.Fader, error) {
-	builder := fader.New().WithFPS(fps).WithFadeDuration(fadeDuration)
-
-	for _, target := range appIDTargets {
-		sel, from, to, err := parseTarget(target)
-		if err != nil {
-			return nil, err
-		}
-		re, err := regexp.Compile(sel)
-		if err != nil {
-			return nil, err
-		}
-		builder = builder.WithContainerAppIDFade(re, from, to)
+func main() {
+	if err := root.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
+		os.Exit(1)
 	}
-
-	for _, target := range classTargets {
-		sel, from, to, err := parseTarget(target)
-		if err != nil {
-			return nil, err
-		}
-		re, err := regexp.Compile(sel)
-		if err != nil {
-			return nil, err
-		}
-		builder = builder.WithContainerClassFade(re, from, to)
-	}
-
-	return builder.Build(), nil
 }
 
 var root = &cobra.Command{
-	Short: "sway-fader fades in windows on workspace switch and window creation.",
+	Short: "sway-fader fades in sway or i3 windows on workspace focus and window new events.",
 	RunE: func(c *cobra.Command, args []string) error {
 		socketPath, err := getSocketPath()
 		if err != nil {
@@ -125,30 +102,50 @@ var root = &cobra.Command{
 	},
 }
 
-func main() {
-	if err := root.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s", err.Error())
-		os.Exit(1)
+func newFader() (*fader.Fader, error) {
+	builder := fader.New().WithFPS(fps).WithFadeDuration(fadeDuration)
+
+	for _, target := range appIDTargets {
+		re, from, to, err := parseTarget(target)
+		if err != nil {
+			return nil, err
+		}
+		builder = builder.WithContainerAppIDFade(re, from, to)
 	}
+
+	for _, target := range classTargets {
+		re, from, to, err := parseTarget(target)
+		if err != nil {
+			return nil, err
+		}
+		builder = builder.WithContainerClassFade(re, from, to)
+	}
+
+	return builder.Build(), nil
 }
 
-func parseTarget(flagValue string) (selector string, from, to float64, err error) {
+func parseTarget(flagValue string) (selector *regexp.Regexp, from, to float64, err error) {
 	parts := strings.Split(flagValue, ":")
 	if len(parts) != 3 {
-		return "", 0, 0, fmt.Errorf("invalid number of target components: %s", flagValue)
+		return nil, 0, 0, fmt.Errorf("invalid number of target components: %s", flagValue)
 	}
 
 	from, err = strconv.ParseFloat(parts[1], 64)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid from value in target '%s': %w", flagValue, err)
+		return nil, 0, 0, fmt.Errorf("invalid from value in target '%s': %w", flagValue, err)
 	}
 
 	to, err = strconv.ParseFloat(parts[2], 64)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid to value in target '%s': %w", flagValue, err)
+		return nil, 0, 0, fmt.Errorf("invalid to value in target '%s': %w", flagValue, err)
 	}
 
-	return parts[0], from, to, nil
+	re, err := regexp.Compile(parts[0])
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	return re, from, to, nil
 }
 
 func getSocketPath() (string, error) {
