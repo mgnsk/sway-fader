@@ -18,9 +18,10 @@ jobs:
           go-version: 1.21
       - uses: go-semantic-release/action@v1
         with:
-          hooks: goreleaser
-          targets:
-            - linux_amd64
-            - linux_arm64
+          hooks:
+            - id: goreleaser
+              targets:
+                - linux_amd64
+                - linux_arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
