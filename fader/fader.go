@@ -1,19 +1,14 @@
 package fader
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"regexp"
 	"time"
-	"unsafe"
 
 	"github.com/fogleman/ease"
 	"go.i3wm.org/i3/v4"
 )
-
-// Frames is a command buffer for each frame.
-type Frames []*bytes.Buffer
 
 // Fader runs fades on containers.
 type Fader struct {
@@ -32,7 +27,7 @@ func (h *Fader) StartFade(node *i3.Node) {
 	}
 
 	if job, ok := h.running[node.ID]; ok {
-		job.Stop()
+		job.StopWait()
 		delete(h.running, node.ID)
 	}
 
@@ -187,9 +182,4 @@ func (build Builder) Build() *Fader {
 		cache:      map[i3.NodeID][]string{},
 		running:    map[i3.NodeID]*fadeJob{},
 	}
-}
-
-// bytesToString returns an unsafe string using the underlying slice.
-func bytesToString(b []byte) string {
-	return unsafe.String(unsafe.SliceData(b), len(b))
 }

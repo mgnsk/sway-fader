@@ -53,7 +53,7 @@ func (j *fadeJob) Run() error {
 	return nil
 }
 
-func (j *fadeJob) Stop() {
+func (j *fadeJob) StopWait() {
 	close(j.quit)
 	<-j.done
 }
