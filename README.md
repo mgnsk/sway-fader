@@ -1,6 +1,6 @@
 # sway-fader
 
-sway-fader fades in sway or i3 windows on workspace focus and window new events.
+sway-fader fades in containers on workspace focus and window new events.
 
 # Install
 

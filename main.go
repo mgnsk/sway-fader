@@ -43,7 +43,7 @@ func main() {
 }
 
 var root = &cobra.Command{
-	Short: "sway-fader fades in sway or i3 windows on workspace focus and window new events.",
+	Short: "sway-fader fades in containers on workspace focus and window new events.",
 	RunE: func(c *cobra.Command, args []string) error {
 		socketPath, err := getSocketPath()
 		if err != nil {
@@ -154,16 +154,14 @@ func getSocketPath() (string, error) {
 		return "", err
 	}
 
-	for _, wm := range []string{"sway", "i3"} {
-		if slices.ContainsFunc(procs, func(p ps.Process) bool {
-			return p.Executable() == wm
-		}) {
-			out, err := exec.Command(wm, "--get-socketpath").CombinedOutput()
-			return string(out), err
-		}
+	if !slices.ContainsFunc(procs, func(p ps.Process) bool {
+		return p.Executable() == "sway"
+	}) {
+		return "", fmt.Errorf("could not find a running sway process")
 	}
 
-	return "", fmt.Errorf("could not find a running sway or i3 process")
+	out, err := exec.Command("sway", "--get-socketpath").CombinedOutput()
+	return string(out), err
 }
 
 func walkTree(node *i3.Node, f func(node *i3.Node) bool) bool {
