@@ -72,31 +72,27 @@ var root = &cobra.Command{
 			})
 		}
 
-		go func() {
-			r := i3.Subscribe(i3.WorkspaceEventType, i3.WindowEventType)
-			for r.Next() {
-				switch ev := r.Event().(type) {
-				case *i3.WindowEvent:
-					if ev.Change == "new" {
-						f.StartFade(&ev.Container)
-					}
-				case *i3.WorkspaceEvent:
-					if ev.Change == "focus" {
-						walkTree(&ev.Current, func(node *i3.Node) bool {
-							if node.Type == i3.Con {
-								f.StartFade(node)
-							}
-							return true
-						})
-					}
+		r := i3.Subscribe(i3.WorkspaceEventType, i3.WindowEventType)
+
+		for r.Next() {
+			switch ev := r.Event().(type) {
+			case *i3.WindowEvent:
+				if ev.Change == "new" {
+					f.StartFade(&ev.Container)
+				}
+			case *i3.WorkspaceEvent:
+				if ev.Change == "focus" {
+					walkTree(&ev.Current, func(node *i3.Node) bool {
+						if node.Type == i3.Con {
+							f.StartFade(node)
+						}
+						return true
+					})
 				}
 			}
-			log.Fatal(r.Close())
-		}()
+		}
 
-		<-c.Context().Done()
-
-		return c.Context().Err()
+		return r.Close()
 	},
 }
 
