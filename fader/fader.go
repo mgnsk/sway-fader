@@ -26,18 +26,16 @@ func (h *Fader) StartFade(node *i3.Node) {
 		panic(fmt.Sprintf("createConRequests: expected node type 'con', got %s", node.Type))
 	}
 
-	if job, ok := h.running[node.ID]; ok {
-		job.StopWait()
-		delete(h.running, node.ID)
-	}
-
-	// Clean up finished jobs.
-	for _, job := range h.running {
+	for id, job := range h.running {
 		select {
 		case <-job.Done():
-			delete(h.running, node.ID)
+			delete(h.running, id)
 		default:
 		}
+	}
+
+	if _, ok := h.running[node.ID]; ok {
+		return
 	}
 
 	if t := h.getTransition(node); t != nil {
