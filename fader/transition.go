@@ -31,8 +31,6 @@ func (l fadeList) find(s string) transition {
 	return nil
 }
 
-const cacheSize = 64
-
 func newTransition(from, to float64, steps int, f easeFunction) transition {
 	frames := make([]float64, steps)
 

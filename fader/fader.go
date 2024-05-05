@@ -1,3 +1,4 @@
+// Package fader implements sway container fading.
 package fader
 
 import (
@@ -16,7 +17,6 @@ type Fader struct {
 	numFrames  int
 	appFades   fadeList
 	classFades fadeList
-	cache      map[i3.NodeID][]string
 	running    map[i3.NodeID]*fadeJob
 }
 
@@ -41,8 +41,7 @@ func (h *Fader) StartFade(node *i3.Node) {
 	}
 
 	if t := h.getTransition(node); t != nil {
-		commands := h.getCommands(t, node.ID)
-		job := newFadeJob(commands, h.frameDur)
+		job := newFadeJob(t, node.ID, h.frameDur)
 		h.running[node.ID] = job
 		go func() {
 			if err := job.Run(); err != nil {
@@ -60,19 +59,6 @@ func (h *Fader) getTransition(con *i3.Node) transition {
 	}
 
 	return h.classFades.find(con.WindowProperties.Class)
-}
-
-func (h *Fader) getCommands(t transition, conID i3.NodeID) []string {
-	commands, ok := h.cache[conID]
-	if !ok {
-		for _, opacity := range t {
-			commands = append(commands, fmt.Sprintf(`[con_id=%d] opacity %.4f;`, conID, opacity))
-		}
-
-		h.cache[conID] = commands
-	}
-
-	return commands
 }
 
 var defaultEaseFn = ease.Linear
@@ -98,7 +84,7 @@ type Builder func(*options)
 
 // New creates a new fader.
 func New() Builder {
-	return func(o *options) {}
+	return func(*options) {}
 }
 
 // WithFadeDuration configures the fade duration.
@@ -179,7 +165,6 @@ func (build Builder) Build() *Fader {
 		numFrames:  numFrames,
 		appFades:   appFades,
 		classFades: classFades,
-		cache:      map[i3.NodeID][]string{},
 		running:    map[i3.NodeID]*fadeJob{},
 	}
 }
