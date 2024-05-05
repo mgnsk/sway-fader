@@ -33,6 +33,9 @@ func init() {
 	root.PersistentFlags().DurationVarP(&fadeDuration, "duration", "d", fadeDuration, "Duration of the fade")
 	root.PersistentFlags().StringArrayVar(&appIDTargets, "app_id", appIDTargets, `Override fade settings per container app_id. Format: "regex:from:to". Example: --app_id="foot:0.7:0.97" --app_id="org.telegram.desktop:0.8:1.0"`)
 	root.PersistentFlags().StringArrayVar(&classTargets, "class", classTargets, `Override fade settings per container class. Format: "regex:from:to". Example: --class="FreeTube:0.7:1.0" --class="Firefox:0.8:1.0"`)
+
+	i3.SocketPathHook = getSocketPath
+	i3.IsRunningHook = isSwayRunning
 }
 
 func main() {
@@ -45,13 +48,8 @@ func main() {
 var root = &cobra.Command{
 	Short: "sway-fader fades in containers on workspace focus and window new events.",
 	RunE: func(c *cobra.Command, args []string) error {
-		socketPath, err := getSocketPath()
-		if err != nil {
-			return err
-		}
-
-		i3.SocketPathHook = func() (string, error) {
-			return socketPath, nil
+		if !isSwayRunning() {
+			return fmt.Errorf("could not find running sway process")
 		}
 
 		f, err := newFader()
@@ -148,22 +146,6 @@ func parseTarget(flagValue string) (selector *regexp.Regexp, from, to float64, e
 	return re, from, to, nil
 }
 
-func getSocketPath() (string, error) {
-	procs, err := ps.Processes()
-	if err != nil {
-		return "", err
-	}
-
-	if !slices.ContainsFunc(procs, func(p ps.Process) bool {
-		return p.Executable() == "sway"
-	}) {
-		return "", fmt.Errorf("could not find a running sway process")
-	}
-
-	out, err := exec.Command("sway", "--get-socketpath").CombinedOutput()
-	return string(out), err
-}
-
 func walkTree(node *i3.Node, f func(node *i3.Node) bool) bool {
 	if !f(node) {
 		return false
@@ -176,4 +158,20 @@ func walkTree(node *i3.Node, f func(node *i3.Node) bool) bool {
 	}
 
 	return true
+}
+
+func isSwayRunning() bool {
+	procs, err := ps.Processes()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return slices.ContainsFunc(procs, func(p ps.Process) bool {
+		return p.Executable() == "sway"
+	})
+}
+
+func getSocketPath() (string, error) {
+	out, err := exec.Command("sway", "--get-socketpath").CombinedOutput()
+	return string(out), err
 }
