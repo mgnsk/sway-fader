@@ -2,6 +2,14 @@
 
 sway-fader fades in containers on workspace focus and window new events.
 
+# Install
+
+Installation from release or from source:
+
+```
+go install github.com/mgnsk/sway-fader@latest
+```
+
 # Configuration
 
 ```
