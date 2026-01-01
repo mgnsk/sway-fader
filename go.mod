@@ -5,7 +5,7 @@ go 1.23.0
 require (
 	github.com/fogleman/ease v0.0.0-20170301025033-8da417bf1776
 	github.com/mitchellh/go-ps v1.0.0
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	go.i3wm.org/i3/v4 v4.24.0
 )
 
